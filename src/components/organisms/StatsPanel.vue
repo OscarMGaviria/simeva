@@ -1,48 +1,115 @@
 <script setup>
-import { ref, watch } from 'vue'
-import { Route, CheckCircle2, Wrench, Clock } from 'lucide-vue-next'
-import StatCard from '../atoms/StatCard.vue'
+import { ref, watch, computed } from 'vue'
+import { Route, Ruler, MapPin, GitBranch } from 'lucide-vue-next'
+import StatCard    from '../atoms/StatCard.vue'
+import ProgressRing from '../atoms/ProgressRing.vue'
+import ProgressBar  from '../atoms/ProgressBar.vue'
 
 const props = defineProps({
   isOpen: { type: Boolean, default: true },
+
+  // KPI
+  viasIntervenidas: { type: Number, default: 47 },
+  longitudTotal:    { type: Number, default: 634.43 },
+  municipios:       { type: Number, default: 42 },
+  circuitos:        { type: Number, default: 29 },
+
+  // Avance
+  avanceFisicoPct: { type: Number, default: 3 },
+  avanceKmPct:     { type: Number, default: 3 },
+  kmIntervenidos:  { type: Number, default: 0.0 },
+  kmContractuales: { type: Number, default: 634.4 },
+  kmPendientes:    { type: Number, default: 634.4 },
+
+  // Subregiones
+  subregiones: {
+    type: Array,
+    default: () => [
+      { name: 'Urabá',        km: 110, pct: 3 },
+      { name: 'Norte',        km: 105, pct: 3 },
+      { name: 'Oriente',      km:  98, pct: 0 },
+      { name: 'Occidente',    km:  90, pct: 3 },
+      { name: 'Suroeste',     km:  85, pct: 3 },
+      { name: 'Magdalena M.', km:  68, pct: 3 },
+      { name: 'Nordeste',     km:  62, pct: 3 },
+      { name: 'Bajo Cauca',   km:  28, pct: 3 },
+    ],
+  },
 })
 
-const subregionesCoverage = [
-  { name: 'Valle de Aburrá', pct: 84, color: '#0b5640' },
-  { name: 'Oriente',         pct: 71, color: '#1d7a56' },
-  { name: 'Occidente',       pct: 58, color: '#2e9e6c' },
-  { name: 'Norte',           pct: 62, color: '#1d7a56' },
-  { name: 'Nordeste',        pct: 43, color: '#f59e0b' },
-  { name: 'Suroeste',        pct: 55, color: '#f59e0b' },
-  { name: 'Bajo Cauca',      pct: 31, color: '#ef4444' },
-  { name: 'Magdalena Medio', pct: 28, color: '#ef4444' },
-  { name: 'Urabá',           pct: 37, color: '#ef4444' },
-]
-
-// Controls content visibility + bar widths
+// ── Animate-in control ──────────────────────────────────────────────────────
 const showContent = ref(props.isOpen)
-const barWidths   = ref(subregionesCoverage.map(s => props.isOpen ? s.pct : 0))
-
 let openTimer = null
-let barTimer  = null
+
+// ── Count-up animation ───────────────────────────────────────────────────────
+const dispVias  = ref(0)
+const dispLong  = ref(0)
+const dispMpios = ref(0)
+const dispCirc  = ref(0)
+
+function countUp(dispRef, target, duration = 1000) {
+  const from      = dispRef.value
+  const startTime = performance.now()
+  function step(now) {
+    const t      = Math.min((now - startTime) / duration, 1)
+    const eased  = 1 - (1 - t) ** 3           // ease-out cubic
+    dispRef.value = from + (target - from) * eased
+    if (t < 1) requestAnimationFrame(step)
+    else dispRef.value = target
+  }
+  requestAnimationFrame(step)
+}
+
+function resetCounters() {
+  dispVias.value  = 0
+  dispLong.value  = 0
+  dispMpios.value = 0
+  dispCirc.value  = 0
+}
+
+function animateCounters() {
+  countUp(dispVias,  props.viasIntervenidas)
+  countUp(dispLong,  props.longitudTotal,   1200)
+  countUp(dispMpios, props.municipios)
+  countUp(dispCirc,  props.circuitos)
+}
+
+// Formatters para mostrar en las cards
+const fmtVias  = computed(() => Math.round(dispVias.value))
+const fmtLong  = computed(() => dispLong.value.toLocaleString('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
+const fmtMpios = computed(() => Math.round(dispMpios.value))
+const fmtCirc  = computed(() => Math.round(dispCirc.value))
 
 watch(() => props.isOpen, (val) => {
   clearTimeout(openTimer)
-  clearTimeout(barTimer)
-
   if (val) {
-    // Small delay so panel width transition starts first
+    // Espera que el panel termine de deslizar (~280ms) antes de mostrar contenido
     openTimer = setTimeout(() => {
       showContent.value = true
-      // Bars animate after cards appear
-      barTimer = setTimeout(() => {
-        barWidths.value = subregionesCoverage.map(s => s.pct)
-      }, 250)
-    }, 120)
+      setTimeout(animateCounters, 80)
+    }, 280)
   } else {
-    barWidths.value = subregionesCoverage.map(() => 0)
-    openTimer = setTimeout(() => { showContent.value = false }, 80)
+    // Oculta contenido antes de que el panel cierre
+    showContent.value = false
+    resetCounters()
   }
+})
+
+// Re-animar cuando llegan datos reales del API
+watch(
+  () => [props.viasIntervenidas, props.longitudTotal, props.municipios, props.circuitos],
+  () => { if (showContent.value) animateCounters() }
+)
+
+// ── Bar chart helpers ───────────────────────────────────────────────────────
+const maxKm = computed(() => Math.max(...props.subregiones.map(s => s.km), 1))
+
+const yTicks = computed(() => {
+  const max  = maxKm.value
+  const step = Math.ceil(max / 4 / 10) * 10
+  const ticks = []
+  for (let v = 0; v <= max; v += step) ticks.unshift(v)
+  return ticks
 })
 </script>
 
@@ -50,39 +117,110 @@ watch(() => props.isOpen, (val) => {
   <div class="stats-side" :class="{ open: props.isOpen }">
     <div class="panel-inner">
 
-      <!-- 4 cards en una fila -->
+      <!-- ── KPI cards ─────────────────────────────────────────────────── -->
       <div class="cards-row" :class="{ animate: showContent }">
-        <StatCard title="Red Vial Total"  value="450" unit="km">
-          <Route :size="20" />
+        <StatCard title="Vías intervenidas" :value="fmtVias">
+          <Route :size="18" />
         </StatCard>
-        <StatCard title="Pavimentadas"    value="312" unit="km">
-          <CheckCircle2 :size="20" />
+        <StatCard title="Longitud total" :value="fmtLong" unit="km">
+          <Ruler :size="18" />
         </StatCard>
-        <StatCard title="En Ejecución"    value="18"  unit="km">
-          <Wrench :size="20" />
+        <StatCard title="Municipios" :value="fmtMpios">
+          <MapPin :size="18" />
         </StatCard>
-        <StatCard title="Por Ejecutar"    value="120" unit="km">
-          <Clock :size="20" />
+        <StatCard title="Circuitos" :value="fmtCirc">
+          <GitBranch :size="18" />
         </StatCard>
       </div>
 
-      <!-- subregiones -->
-      <div class="section-title" :class="{ animate: showContent }">Cobertura por Subregión</div>
-      <div class="subregionesList">
-        <div
-          v-for="(s, i) in subregionesCoverage"
-          :key="s.name"
-          class="subregion-row"
-          :class="{ animate: showContent }"
-          :style="{ '--row-i': i }"
-        >
-          <div class="sub-label">
-            <span class="sub-name">{{ s.name }}</span>
-            <span class="sub-pct" :style="{ color: s.color }">{{ s.pct }}%</span>
+      <!-- ── Avance físico + Avance en km ──────────────────────────────── -->
+      <div class="avance-row" :class="{ animate: showContent }">
+
+        <!-- Avance físico -->
+        <div class="avance-card">
+          <div class="section-label">
+            <span class="sl-dot">✓</span> Avance físico
           </div>
-          <div class="progress-track">
-            <div class="progress-fill" :style="{ width: barWidths[i] + '%', background: s.color }" />
+          <div class="ring-wrap">
+            <ProgressRing
+              :pct="avanceFisicoPct"
+              :size="110"
+              :stroke="10"
+              label="avance físico"
+              sublabel="Ponderado por longitud intervenida"
+            />
           </div>
+          <span class="phase-badge">Inicio</span>
+        </div>
+
+        <!-- Avance en km -->
+        <div class="avance-card avance-km">
+          <div class="section-label">
+            <span class="sl-dot">↗</span> Avance en kilómetros
+          </div>
+
+          <ProgressBar
+            :pct="avanceKmPct"
+            color="#2d8653"
+            track-color="#c6e8d3"
+            :height="10"
+          />
+          <div class="km-range">
+            <span>0 km</span>
+            <span>{{ kmContractuales.toFixed(1) }} km totales</span>
+          </div>
+
+          <div class="km-metrics">
+            <div class="km-metric">
+              <span class="km-val">{{ kmIntervenidos.toFixed(1) }}</span>
+              <span class="km-unit">km</span>
+              <span class="km-lbl">INTERVENIDOS</span>
+            </div>
+            <div class="km-sep" />
+            <div class="km-metric">
+              <span class="km-val">{{ kmContractuales.toFixed(1) }}</span>
+              <span class="km-unit">km</span>
+              <span class="km-lbl">CONTRACTUALES</span>
+            </div>
+            <div class="km-sep" />
+            <div class="km-metric pending">
+              <span class="km-val">{{ kmPendientes.toFixed(1) }}</span>
+              <span class="km-unit">km</span>
+              <span class="km-lbl">PENDIENTES</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ── Gráfica por subregión ─────────────────────────────────────── -->
+      <div class="chart-card" :class="{ animate: showContent }">
+        <div class="chart-title">Longitud por subregión (km)</div>
+        <div class="chart-body">
+
+          <!-- Y-axis -->
+          <div class="chart-y">
+            <div v-for="tick in yTicks" :key="tick" class="y-tick">{{ tick }} km</div>
+          </div>
+
+          <!-- Bars -->
+          <div class="chart-area">
+            <div class="chart-grid">
+              <div v-for="(_, i) in yTicks" :key="i" class="grid-line" />
+            </div>
+
+            <div v-for="s in subregiones" :key="s.name" class="bar-col">
+              <div class="bar-outer">
+                <span class="bar-badge">{{ s.pct }}%</span>
+                <div
+                  class="bar-fill"
+                  :style="{ height: (s.km / maxKm * 100) + '%' }"
+                />
+              </div>
+              <span class="bar-label">{{ s.name }}</span>
+            </div>
+          </div>
+
         </div>
       </div>
 
@@ -91,21 +229,49 @@ watch(() => props.isOpen, (val) => {
 </template>
 
 <style scoped>
-/* ── Panel shell ── */
+/* ── Panel shell ──────────────────────────────────────────────────────────── */
 .stats-side {
   position: relative;
-  display: flex;
-  flex-direction: row;
   flex-shrink: 0;
   width: 0;
-  transition: width .38s cubic-bezier(.4,0,.2,1);
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   background: #eaf4ed;
-  border-left: 1px solid #c8dfd0;
+  border-left: none;
+  transition: width .46s cubic-bezier(.34, 1.10, 0.64, 1),
+              box-shadow .46s ease;
+  will-change: width;
 }
-.stats-side.open { width: 50%; }
 
-/* ── Scrollable body ── */
+/* Blobs decorativos que sirven de fondo para el backdrop-filter */
+.stats-side::before,
+.stats-side::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+}
+.stats-side::before {
+  width: 280px; height: 280px;
+  top: -60px; right: -60px;
+  background: radial-gradient(circle, rgba(45,134,83,0.35) 0%, transparent 70%);
+  filter: blur(40px);
+}
+.stats-side::after {
+  width: 220px; height: 220px;
+  bottom: 40px; left: -40px;
+  background: radial-gradient(circle, rgba(11,86,64,0.28) 0%, transparent 70%);
+  filter: blur(38px);
+}
+.stats-side.open {
+  width: 50%;
+  border-left: 1px solid rgba(200,223,208,0.6);
+  box-shadow: -6px 0 28px rgba(11,86,64,.12);
+}
+
+/* ── Scrollable body ──────────────────────────────────────────────────────── */
 .panel-inner {
   flex: 1;
   overflow-y: auto;
@@ -115,88 +281,243 @@ watch(() => props.isOpen, (val) => {
   flex-direction: column;
   gap: 14px;
   min-width: 0;
+  min-height: 0;
+  position: relative;
+  z-index: 1;
 }
 
-/* ── Keyframes ── */
+/* ── Keyframes ────────────────────────────────────────────────────────────── */
 @keyframes fadeSlideUp {
-  from { opacity: 0; transform: translateY(14px); }
-  to   { opacity: 1; transform: translateY(0);    }
+  from { opacity: 0; transform: translateY(18px) scale(.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);   }
 }
-
 @keyframes fadeSlideRight {
-  from { opacity: 0; transform: translateX(-10px); }
+  from { opacity: 0; transform: translateX(-14px); }
   to   { opacity: 1; transform: translateX(0);     }
 }
 
-/* ── Cards stagger ── */
+/* ── KPI cards ────────────────────────────────────────────────────────────── */
 .cards-row {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 8px;
 }
+.cards-row > * { opacity: 0; }
+.cards-row.animate > *:nth-child(1) { animation: fadeSlideUp .38s cubic-bezier(.34,1.10,.64,1)  60ms  both; }
+.cards-row.animate > *:nth-child(2) { animation: fadeSlideUp .38s cubic-bezier(.34,1.10,.64,1) 130ms  both; }
+.cards-row.animate > *:nth-child(3) { animation: fadeSlideUp .38s cubic-bezier(.34,1.10,.64,1) 200ms  both; }
+.cards-row.animate > *:nth-child(4) { animation: fadeSlideUp .38s cubic-bezier(.34,1.10,.64,1) 270ms  both; }
 
-.cards-row > * {
+/* ── Avance row ───────────────────────────────────────────────────────────── */
+.avance-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
   opacity: 0;
 }
-.cards-row.animate > *:nth-child(1) { animation: fadeSlideUp .4s cubic-bezier(.4,0,.2,1) 0ms   both; }
-.cards-row.animate > *:nth-child(2) { animation: fadeSlideUp .4s cubic-bezier(.4,0,.2,1) 70ms  both; }
-.cards-row.animate > *:nth-child(3) { animation: fadeSlideUp .4s cubic-bezier(.4,0,.2,1) 140ms both; }
-.cards-row.animate > *:nth-child(4) { animation: fadeSlideUp .4s cubic-bezier(.4,0,.2,1) 210ms both; }
+.avance-row.animate {
+  animation: fadeSlideRight .40s cubic-bezier(.34,1.10,.64,1) 340ms both;
+}
 
-/* ── Section title ── */
-.section-title {
+.avance-card {
+  background: rgba(255,255,255,0.45);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255,255,255,0.75);
+  border-radius: 16px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 4px 20px rgba(11,86,64,.08), 0 1px 4px rgba(0,0,0,.05),
+              inset 0 1px 0 rgba(255,255,255,0.6);
+  transition: box-shadow .2s ease, background .2s ease;
+}
+.avance-card:hover {
+  background: rgba(255,255,255,0.72);
+  box-shadow: 0 8px 32px rgba(11,86,64,.13), 0 2px 8px rgba(0,0,0,.06),
+              inset 0 1px 0 rgba(255,255,255,0.7);
+}
+
+.section-label {
+  align-self: flex-start;
   font-size: 11px;
   font-weight: 700;
-  color: #6b7280;
+  color: #374151;
   text-transform: uppercase;
-  letter-spacing: .5px;
-  padding-top: 6px;
-  border-top: 1px solid #c8dfd0;
-  opacity: 0;
+  letter-spacing: .04em;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
-.section-title.animate {
-  animation: fadeSlideUp .35s cubic-bezier(.4,0,.2,1) 260ms both;
+.sl-dot { color: #2d8653; }
+
+.ring-wrap { align-self: center; }
+
+.phase-badge {
+  background: #fce7f3;
+  color: #be185d;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 12px;
+  border-radius: 99px;
 }
 
-/* ── Subregion rows stagger ── */
-.subregionesList {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.subregion-row {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  opacity: 0;
-}
-.subregion-row.animate {
-  animation: fadeSlideRight .32s cubic-bezier(.4,0,.2,1) calc(300ms + var(--row-i) * 40ms) both;
-}
+/* Avance km */
+.avance-km { align-items: stretch; gap: 6px; }
+.avance-km .section-label { margin-bottom: 2px; }
 
-.sub-label {
+.km-range {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  font-size: 10px;
+  color: #9ca3af;
 }
-.sub-name {
-  font-size: 12px;
-  color: #374151;
-  font-weight: 500;
+
+.km-metrics {
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid #d1e9d8;
+  padding-top: 8px;
+  margin-top: 2px;
 }
-.sub-pct {
+.km-metric {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+.km-val  { font-size: 20px; font-weight: 800; color: #1a3c2d; line-height: 1; }
+.km-unit { font-size: 12px; font-weight: 700; color: #2d8653; }
+.km-lbl  {
+  font-size: 8px; font-weight: 700; color: #9ca3af;
+  letter-spacing: .06em; text-transform: uppercase; margin-top: 2px;
+}
+.pending .km-val,
+.pending .km-unit { color: #f59e0b; }
+.km-sep { width: 1px; background: #d1e9d8; margin: 4px 0; }
+
+/* ── Bar chart ────────────────────────────────────────────────────────────── */
+.chart-card {
+  background: rgba(255,255,255,0.45);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255,255,255,0.75);
+  border-radius: 16px;
+  padding: 14px;
+  opacity: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  box-shadow: 0 4px 20px rgba(11,86,64,.08), 0 1px 4px rgba(0,0,0,.05),
+              inset 0 1px 0 rgba(255,255,255,0.6);
+}
+.chart-card.animate {
+  animation: fadeSlideUp .42s cubic-bezier(.34,1.10,.64,1) 420ms both;
+}
+
+.chart-title {
   font-size: 12px;
   font-weight: 700;
+  color: #1f2937;
+  margin-bottom: 10px;
+  flex-shrink: 0;
 }
-.progress-track {
-  height: 6px;
-  background: #e5e7eb;
-  border-radius: 3px;
-  overflow: hidden;
+
+.chart-body {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
 }
-.progress-fill {
+
+.chart-y {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding-bottom: 22px;
+  flex-shrink: 0;
+}
+.y-tick {
+  font-size: 9px;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
+.chart-area {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  padding-bottom: 22px;
+}
+
+.chart-grid {
+  position: absolute;
+  inset: 0;
+  bottom: 22px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  pointer-events: none;
+}
+.grid-line {
+  width: 100%;
+  height: 1px;
+  background: #d1e9d8;
+}
+
+.bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
   height: 100%;
+}
+.bar-outer {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  position: relative;
+}
+.bar-badge {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 8px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(255,255,255,0.22);
+  padding: 1px 3px;
   border-radius: 3px;
-  transition: width .65s cubic-bezier(.4,0,.2,1);
+  white-space: nowrap;
+  z-index: 1;
+}
+.bar-fill {
+  width: 78%;
+  border-radius: 4px 4px 0 0;
+  min-height: 4px;
+  background: #1a5c3a;
+  transition: height .65s cubic-bezier(.4,0,.2,1);
+}
+.bar-label {
+  font-size: 8px;
+  color: #6b7280;
+  text-align: center;
+  line-height: 1.2;
+  height: 22px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
 }
 </style>

@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, watch } from 'vue'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { Layers, Mountain } from 'lucide-vue-next'
+import { getLocalizaciones, getMunicipios, parseDescription, extractKm } from '../../services/api.js'
 // ── THREE.JS DEMO (eliminar este bloque para revertir) ─────────────────────
 import * as THREE from 'three'
 // ──────────────────────────────────────────────────────────────────────────
@@ -11,13 +12,26 @@ const props = defineProps({
   filters: { type: Object, default: () => ({}) }
 })
 
+const emit = defineEmits(['options-loaded', 'stats-loaded'])
+
 const mapContainer = ref(null)
-const activeBasemap = ref('estandar')
+const activeBasemap = ref('ninguno')
 let map = null
 
+// Tooltip hover municipio
+const hoverLabel = ref({ name: '', x: 0, y: 0, visible: false })
+
+// Letreros verticales de filtro activo
+const selectedSubregion = ref('')
+const selectedMunicipio = ref('')
+
+// Callout lines (nombre + km por circuito)
+const callouts        = ref([])   // todos los circuitos cargados
+const visibleCallouts = ref([])   // subconjunto visible según filtro activo
+
 // ── THREE.JS DEMO: encuadre centrado en la ruta ────────────────────────────
-const CENTER = [-75.5100, 6.1900]
-const ZOOM   = 13
+const CENTER = [-75.5636, 6.2442]
+const ZOOM   = 7
 // ── ORIGINAL (restaurar al revertir): const CENTER = [-75.5636, 6.2442]; const ZOOM = 8
 
 const BASEMAPS = [
@@ -394,6 +408,119 @@ function createPavingLayer() {
     },
   }
 }
+// ── Señal vertical "A Toda Máquina" al inicio de la ruta ──────────────────
+let signRenderer = null
+
+function createSignLayer() {
+  let _camera, _scene
+
+  return {
+    id: 'sign-3d',
+    type: 'custom',
+    renderingMode: '3d',
+
+    onAdd(map, gl) {
+      _camera = new THREE.Camera()
+      _scene  = new THREE.Scene()
+
+      // ── Helper: crea un Shape hexagonal ──────────────────────────────────
+      function hexShape(r) {
+        const s = new THREE.Shape()
+        for (let i = 0; i < 6; i++) {
+          const a = (Math.PI / 3) * i + Math.PI / 6   // pointy-top
+          const x = r * Math.cos(a)
+          const y = r * Math.sin(a)
+          i === 0 ? s.moveTo(x, y) : s.lineTo(x, y)
+        }
+        s.closePath()
+        return s
+      }
+
+      const matPole  = new THREE.MeshPhongMaterial({ color: 0x1a202c })
+      const matBorder = new THREE.MeshPhongMaterial({ color: 0x0b5640, side: THREE.DoubleSide })
+      const matWhite  = new THREE.MeshPhongMaterial({ color: 0xffffff, side: THREE.DoubleSide })
+
+      // Poste vertical
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.035, 3.8, 8), matPole)
+      pole.position.y = 1.9
+      _scene.add(pole)
+
+      // Base del poste
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.15, 0.12, 8), matPole)
+      base.position.y = 0.06
+      _scene.add(base)
+
+      // Hexágono exterior (borde verde) — extruido para dar grosor
+      const borderGeo = new THREE.ExtrudeGeometry(hexShape(0.85), { depth: 0.07, bevelEnabled: false })
+      const border    = new THREE.Mesh(borderGeo, matBorder)
+      border.position.set(0, 3.55, -0.035)
+      _scene.add(border)
+
+      // Hexágono interior blanco (fondo)
+      const bgGeo = new THREE.ExtrudeGeometry(hexShape(0.74), { depth: 0.04, bevelEnabled: false })
+      const bg    = new THREE.Mesh(bgGeo, matWhite)
+      bg.position.set(0, 3.55, 0.02)
+      _scene.add(bg)
+
+      // Cara trasera del hexágono (borde + blanco para que se vea bien desde atrás)
+      const borderBack = border.clone()
+      borderBack.rotation.y = Math.PI
+      borderBack.position.set(0, 3.55, 0.035)
+      _scene.add(borderBack)
+      const bgBack = bg.clone()
+      bgBack.rotation.y = Math.PI
+      bgBack.position.set(0, 3.55, -0.02)
+      _scene.add(bgBack)
+
+      // Logo centrado sobre el hexágono
+      const hexTop  = 3.55 + 0.62   // top vertex of hexagon
+      const hexBot  = 3.55 - 0.62
+      const hexH    = hexTop - hexBot
+      const signH   = hexH * 0.55
+      const signW   = signH * (350 / 140)  // approx aspect ratio of logo
+
+      const loader = new THREE.TextureLoader()
+      loader.load('/A toda maquina.png', (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace
+        const mat  = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide })
+        const sign = new THREE.Mesh(new THREE.PlaneGeometry(signW, signH), mat)
+        sign.position.set(0, 3.55, 0.065)
+        _scene.add(sign)
+        const signBack = sign.clone()
+        signBack.position.z = -0.065
+        signBack.rotation.y = Math.PI
+        _scene.add(signBack)
+      })
+
+      // Iluminación
+      _scene.add(new THREE.AmbientLight(0xffffff, 1.1))
+      const sun = new THREE.DirectionalLight(0xffffff, 1.4)
+      sun.position.set(80, 150, 60)
+      _scene.add(sun)
+
+      signRenderer = new THREE.WebGLRenderer({ canvas: map.getCanvas(), context: gl, antialias: true })
+      signRenderer.autoClear = false
+    },
+
+    render(_gl, args) {
+      const pos   = CAR_ROUTE[0]
+      const merc  = maplibregl.MercatorCoordinate.fromLngLat(pos, 0)
+      const scale = 300 * merc.meterInMercatorCoordinateUnits()
+
+      const l = new THREE.Matrix4()
+        .makeTranslation(merc.x, merc.y, merc.z)
+        .scale(new THREE.Vector3(scale, -scale, scale))
+
+      const rawMatrix = args?.defaultProjectionData?.mainMatrix ?? args
+      const m = new THREE.Matrix4().fromArray(rawMatrix)
+
+      _camera.projectionMatrix = m.multiply(l)
+      signRenderer.resetState()
+      signRenderer.render(_scene, _camera)
+      map.triggerRepaint()
+    },
+  }
+}
 // ── END THREE.JS DEMO ──────────────────────────────────────────────────────
 
 onMounted(() => {
@@ -412,7 +539,7 @@ onMounted(() => {
         }
       },
       layers: [
-        { id: 'base-layer', type: 'raster', source: 'base', minzoom: 0, maxzoom: 19 }
+        { id: 'base-layer', type: 'raster', source: 'base', minzoom: 0, maxzoom: 19, layout: { visibility: 'none' } }
       ]
     },
     center: CENTER,
@@ -426,8 +553,13 @@ onMounted(() => {
     'top-right'
   )
 
+  // ResizeObserver: llama map.resize() en cada frame de la transición CSS
+  // para que el canvas no parpadee en negro al redimensionarse
+  resizeObs = new ResizeObserver(() => { map?.resize() })
+  resizeObs.observe(mapContainer.value)
+
   // ── THREE.JS DEMO ─────────────────────────────────────────────────────
-  map.on('load', () => {
+  map.on('load', async () => {
     // Fuente DEM para relieve 3D
     map.addSource('terrain-dem', {
       type: 'raster-dem',
@@ -479,22 +611,479 @@ onMounted(() => {
 
     // Máquina pavimentadora 3D
     map.addLayer(createPavingLayer())
+
+    // Señal vertical "A Toda Máquina" al inicio de la ruta
+    map.addLayer(createSignLayer())
+
+    // ── Capas SIMEVA ──────────────────────────────────────────────────────
+    await loadSimeva()
   })
   // ── END THREE.JS DEMO ─────────────────────────────────────────────────
 })
 
+// ── Carga capas SIMEVA desde los endpoints mock ─────────────────────────────
+let popup          = null
+let cachedMunicipios = null
+let cachedVias       = null
+
+async function loadSimeva() {
+  if (!map) return
+  const [resMunicipios, resVias] = await Promise.allSettled([getMunicipios(), getLocalizaciones()])
+
+  cachedMunicipios = resMunicipios.status === 'fulfilled' ? resMunicipios.value : null
+  cachedVias       = resVias.status       === 'fulfilled' ? resVias.value       : null
+
+  const geoMunicipios = cachedMunicipios
+  const geoVias       = cachedVias
+
+  if (resMunicipios.status === 'rejected') console.warn('[SIMEVA] Municipios:', resMunicipios.reason)
+  if (resVias.status       === 'rejected') console.warn('[SIMEVA] Vías:', resVias.reason)
+
+  // ── Emitir opciones reales para los filtros ──────────────────────────────
+  const subregiones = geoMunicipios
+    ? [...new Set(geoMunicipios.features.map(f => sentenceCase(f.properties.subregion)).filter(Boolean))].sort()
+    : []
+  const municipioOpts = geoMunicipios
+    ? [...new Set(geoMunicipios.features.map(f => sentenceCase(f.properties.mpio_nombr)).filter(Boolean))].sort()
+    : []
+  const circuitos = geoVias
+    ? geoVias.features.map(f => f.properties.name).filter(Boolean).sort()
+    : []
+
+  emit('options-loaded', {
+    subregiones: ['Todas las subregiones', ...subregiones],
+    municipios:  ['Todos los municipios',  ...municipioOpts],
+    circuitos:   ['Todos los circuitos',   ...circuitos],
+  })
+
+  // ── Stats reales del GeoJSON ─────────────────────────────────────────────
+  const totalCircuitos   = geoVias?.features.length ?? 0
+  const uniqueMunicipios = geoMunicipios
+    ? new Set(geoMunicipios.features.map(f => f.properties.mpio_nombr)).size : 0
+  let longitudTotal = 0
+  if (geoVias) {
+    for (const f of geoVias.features) {
+      const km = extractKm(parseDescription(f.properties.description ?? ''))
+      if (km) longitudTotal += km
+    }
+  }
+  emit('stats-loaded', {
+    viasIntervenidas: totalCircuitos,
+    longitudTotal:    Math.round(longitudTotal * 100) / 100,
+    municipios:       uniqueMunicipios,
+    circuitos:        totalCircuitos,
+  })
+
+  // ── Municipios: polígonos de fondo ────────────────────────────────────
+  if (geoMunicipios) {
+    try {
+      map.addSource('municipios', { type: 'geojson', data: geoMunicipios, generateId: true })
+      map.addLayer({
+        id: 'municipios-fill',
+        type: 'fill',
+        source: 'municipios',
+        paint: {
+          'fill-color': '#2d8653',
+          'fill-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.22, 0.07],
+        },
+      })
+      map.addLayer({
+        id: 'municipios-outline',
+        type: 'line',
+        source: 'municipios',
+        paint: { 'line-color': '#2d8653', 'line-width': 0.8, 'line-opacity': 0.5 },
+      })
+
+      // Capa de labels de municipios (oculta hasta que se active un filtro)
+      map.addLayer({
+        id: 'municipios-labels',
+        type: 'symbol',
+        source: 'municipios',
+        layout: {
+          'text-field': ['get', 'mpio_nombr'],
+          'text-size': ['interpolate', ['linear'], ['zoom'], 7, 9, 10, 13],
+          'text-anchor': 'center',
+          'text-max-width': 8,
+          'text-allow-overlap': false,
+          'visibility': 'none',
+        },
+        paint: {
+          'text-color': '#0b5640',
+          'text-halo-color': '#ffffff',
+          'text-halo-width': 1.5,
+        },
+      })
+
+      // Hover: highlight + tooltip con nombre
+      let hoveredMpio = null
+      map.on('mousemove', 'municipios-fill', (e) => {
+        map.getCanvas().style.cursor = 'pointer'
+        if (hoveredMpio !== null)
+          map.setFeatureState({ source: 'municipios', id: hoveredMpio }, { hover: false })
+        hoveredMpio = e.features[0].id
+        map.setFeatureState({ source: 'municipios', id: hoveredMpio }, { hover: true })
+
+        const name = e.features[0].properties.mpio_nombr ?? ''
+        const point = e.point
+        hoverLabel.value = { name: capitalize(name), x: point.x, y: point.y, visible: true }
+      })
+      map.on('mouseleave', 'municipios-fill', () => {
+        map.getCanvas().style.cursor = ''
+        if (hoveredMpio !== null)
+          map.setFeatureState({ source: 'municipios', id: hoveredMpio }, { hover: false })
+        hoveredMpio = null
+        hoverLabel.value = { ...hoverLabel.value, visible: false }
+      })
+    } catch (err) {
+      console.error('[SIMEVA] Error cargando municipios:', err)
+    }
+  }
+
+  // ── Vías / Localizaciones ──────────────────────────────────────────────
+  if (geoVias) {
+    try {
+      map.addSource('vias', { type: 'geojson', data: geoVias })
+      map.addLayer({
+        id: 'vias-casing',
+        type: 'line',
+        source: 'vias',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': ['coalesce', ['get', 'stroke-width'], 5],
+          'line-opacity': 0.4,
+        },
+      })
+      map.addLayer({
+        id: 'vias-line',
+        type: 'line',
+        source: 'vias',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color':   ['coalesce', ['get', 'stroke'],         '#ffaa00'],
+          'line-width':   ['coalesce', ['get', 'stroke-width'],   5],
+          'line-opacity': ['coalesce', ['get', 'stroke-opacity'], 1],
+        },
+      })
+
+      popup = new maplibregl.Popup({ closeButton: true, maxWidth: '280px', className: 'simeva-popup' })
+      map.on('click', 'vias-line', (e) => {
+        const p    = e.features[0].properties
+        const info = parseDescription(p.description)
+        const rows = Object.entries(info)
+          .map(([k, v]) => `<tr><td class="sp-key">${k}</td><td class="sp-val">${v}</td></tr>`)
+          .join('')
+        popup
+          .setLngLat(e.lngLat)
+          .setHTML(`<div class="sp-header">${p.name ?? 'Vía'}</div>${rows ? `<table class="sp-table">${rows}</table>` : ''}`)
+          .addTo(map)
+      })
+      map.on('mouseenter', 'vias-line', () => { map.getCanvas().style.cursor = 'pointer' })
+      map.on('mouseleave', 'vias-line', () => { map.getCanvas().style.cursor = '' })
+
+      // Callouts: construir y mantener actualizadas al mover/hacer zoom
+      buildCallouts(geoVias.features)
+      map.on('move',   updateCalloutPositions)
+      map.on('resize', updateCalloutPositions)
+    } catch (err) {
+      console.error('[SIMEVA] Error cargando vías:', err)
+    }
+  }
+}
+
+// ── Filtros: actualiza capas y vuela al feature seleccionado ─────────────────
+function applyFilters(filters) {
+  if (!map) return
+
+  const sub      = filters.subregion ?? ''
+  const mpio     = filters.municipio ?? ''
+  const circuito = filters.circuito  ?? ''
+  const search   = (filters.search   ?? '').toLowerCase()
+
+  // Actualizar letreros verticales
+  selectedSubregion.value = (sub  && sub  !== 'Todas las subregiones') ? sub  : ''
+  selectedMunicipio.value = (mpio && mpio !== 'Todos los municipios')  ? mpio : ''
+
+  // ── Municipios ──────────────────────────────────────────────────────────
+  if (map.getLayer('municipios-fill')) {
+    const mpioFilter = ['all']
+    if (sub  && sub  !== 'Todas las subregiones')
+      mpioFilter.push(['==', ['upcase', ['get', 'subregion']], sub.toUpperCase()])
+    if (mpio && mpio !== 'Todos los municipios')
+      mpioFilter.push(['==', ['upcase', ['get', 'mpio_nombr']], mpio.toUpperCase()])
+    const f = mpioFilter.length > 1 ? mpioFilter : null
+    map.setFilter('municipios-fill',    f)
+    map.setFilter('municipios-outline', f)
+    if (map.getLayer('municipios-labels')) {
+      map.setFilter('municipios-labels', f)
+      // Mostrar labels cuando hay un filtro de subregión o municipio activo
+      const hasGeoFilter = sub !== 'Todas las subregiones' || mpio !== 'Todos los municipios'
+      map.setLayoutProperty('municipios-labels', 'visibility', hasGeoFilter ? 'visible' : 'none')
+    }
+  }
+
+  // ── Vías ────────────────────────────────────────────────────────────────
+  if (map.getLayer('vias-line')) {
+    let viasFilter = null
+    if (circuito && circuito !== 'Todos los circuitos') {
+      viasFilter = ['==', ['get', 'name'], circuito]
+    } else if (search) {
+      viasFilter = ['>', ['index-of', search, ['downcase', ['coalesce', ['get', 'name'], '']]], -1]
+    }
+    map.setFilter('vias-line',   viasFilter)
+    map.setFilter('vias-casing', viasFilter)
+  }
+
+  // ── Zoom al feature seleccionado ────────────────────────────────────────
+  // Prioridad: municipio > subregión > circuito
+  if (mpio && mpio !== 'Todos los municipios' && cachedMunicipios) {
+    const feat = cachedMunicipios.features.find(
+      f => f.properties.mpio_nombr?.toUpperCase() === mpio.toUpperCase()
+    )
+    if (feat) flyToGeometry(feat.geometry, { padding: 80 })
+
+  } else if (sub && sub !== 'Todas las subregiones' && cachedMunicipios) {
+    const feats = cachedMunicipios.features.filter(
+      f => f.properties.subregion?.toUpperCase() === sub.toUpperCase()
+    )
+    if (feats.length) flyToGeometries(feats.map(f => f.geometry), { padding: 60 })
+
+  } else if (circuito && circuito !== 'Todos los circuitos' && cachedVias) {
+    const feat = cachedVias.features.find(f => f.properties.name === circuito)
+    if (feat) flyToGeometry(feat.geometry, { padding: 80 })
+  } else {
+    // Sin filtro activo: volver a la vista de Antioquia
+    map.flyTo({ center: CENTER, zoom: ZOOM, duration: 900 })
+  }
+
+  // Actualizar callouts visibles según filtro
+  refreshVisibleCallouts(filters)
+}
+
+// ── Helpers de bounding box ──────────────────────────────────────────────────
+function coordsBounds(coords, bounds) {
+  if (typeof coords[0] === 'number') { bounds.extend(coords) }
+  else coords.forEach(c => coordsBounds(c, bounds))
+}
+
+function flyToGeometry(geometry, opts = {}) {
+  const bounds = new maplibregl.LngLatBounds()
+  coordsBounds(geometry.coordinates, bounds)
+  if (!bounds.isEmpty()) map.fitBounds(bounds, { ...opts, duration: 900 })
+}
+
+function flyToGeometries(geometries, opts = {}) {
+  const bounds = new maplibregl.LngLatBounds()
+  geometries.forEach(g => coordsBounds(g.coordinates, bounds))
+  if (!bounds.isEmpty()) map.fitBounds(bounds, { ...opts, duration: 900 })
+}
+
+// ── Sentence case: solo primera letra en mayúscula ───────────────────────────
+function sentenceCase(str) {
+  if (!str) return str
+  const lower = str.toLowerCase()
+  return lower.charAt(0).toUpperCase() + lower.slice(1)
+}
+
+// capitalize sigue disponible para uso interno
+function capitalize(str) {
+  if (!str) return str
+  return str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase())
+}
+
+// ── Callout lines ─────────────────────────────────────────────────────────────
+function collectCoords(coords, out) {
+  if (typeof coords[0] === 'number') out.push(coords)
+  else coords.forEach(c => collectCoords(c, out))
+}
+
+function geoCentroid(geometry) {
+  const pts = []
+  collectCoords(geometry.coordinates, pts)
+  if (!pts.length) return [0, 0]
+  return [
+    pts.reduce((s, p) => s + p[0], 0) / pts.length,
+    pts.reduce((s, p) => s + p[1], 0) / pts.length,
+  ]
+}
+
+function buildCallouts(features) {
+  callouts.value = features.map(f => {
+    const desc      = parseDescription(f.properties.description ?? '')
+    const km        = extractKm(desc)
+    // Extraer subregión de la descripción para poder filtrar luego
+    const subKey    = Object.keys(desc).find(k => /subregi/i.test(k))
+    const subregion = subKey ? String(desc[subKey]).toUpperCase() : ''
+    return {
+      name:     f.properties.name ?? 'Vía',
+      km,
+      subregion,
+      centroid: geoCentroid(f.geometry),
+      screenX: 0, screenY: 0,
+      labelX:  0, labelY:  0,
+      lineEndX: 0, lineEndY: 0,
+    }
+  })
+  visibleCallouts.value = []   // ocultos hasta que haya filtro
+  updateCalloutPositions()
+}
+
+function computeCalloutLayout(c) {
+  if (!map) return c
+  const canvas = map.getCanvas()
+  const W  = canvas.offsetWidth
+  const H  = canvas.offsetHeight
+  const cx = W / 2
+  const cy = H / 2
+  const PUSH = 160
+  const LW   = 170
+  const LH   = 52
+  const PAD  = { t: 50, r: 12, b: 12, l: 12 }
+
+  const screen = map.project(c.centroid)
+  const sx = screen.x
+  const sy = screen.y
+
+  let dx = sx - cx
+  let dy = sy - cy
+  const len = Math.sqrt(dx * dx + dy * dy) || 1
+  dx /= len; dy /= len
+
+  let lx = sx + dx * PUSH
+  let ly = sy + dy * PUSH
+
+  lx = Math.max(PAD.l + LW / 2, Math.min(W - PAD.r - LW / 2, lx))
+  ly = Math.max(PAD.t + LH / 2, Math.min(H - PAD.b - LH / 2, ly))
+
+  const edX = sx - lx
+  const edY = sy - ly
+  const edL = Math.sqrt(edX * edX + edY * edY) || 1
+
+  return {
+    ...c,
+    screenX: sx, screenY: sy,
+    labelX: lx, labelY: ly,
+    lineEndX: lx + (edX / edL) * (LW / 2),
+    lineEndY: ly + (edY / edL) * (LH / 2),
+  }
+}
+
+function updateCalloutPositions() {
+  if (!map) return
+  callouts.value       = callouts.value.map(computeCalloutLayout)
+  // Re-sincronizar posiciones en los visibles
+  const visNames       = new Set(visibleCallouts.value.map(c => c.name))
+  if (visNames.size)
+    visibleCallouts.value = callouts.value.filter(c => visNames.has(c.name))
+}
+
+function refreshVisibleCallouts(filters) {
+  const sub      = filters.subregion ?? ''
+  const mpio     = filters.municipio ?? ''
+  const circuito = filters.circuito  ?? ''
+
+  const hasFilter =
+    (sub      && sub      !== 'Todas las subregiones') ||
+    (mpio     && mpio     !== 'Todos los municipios')  ||
+    (circuito && circuito !== 'Todos los circuitos')
+
+  if (!hasFilter) {
+    visibleCallouts.value = []
+    return
+  }
+
+  let filtered = callouts.value
+
+  if (circuito && circuito !== 'Todos los circuitos') {
+    // Mostrar solo el circuito seleccionado
+    filtered = filtered.filter(c => c.name === circuito)
+  } else if (sub && sub !== 'Todas las subregiones') {
+    // Filtrar por subregión si tenemos ese dato en la descripción del circuito
+    const subUp = sub.toUpperCase()
+    const bySub = filtered.filter(c => c.subregion && c.subregion === subUp)
+    if (bySub.length) filtered = bySub
+    // Si no hay datos de subregión en la descripción, mostramos todos
+  }
+  // Para municipio sin circuito específico: mostramos todos los circuitos visibles
+  // (no tenemos join directo circuito↔municipio en el GeoJSON)
+
+  visibleCallouts.value = filtered.map(computeCalloutLayout)
+}
+
+// ── ResizeObserver: mantiene el canvas sincronizado durante la transición ─────
+let resizeObs = null
+
 onUnmounted(() => {
-  threeRenderer?.dispose()   // ← THREE.JS DEMO (quitar al revertir)
+  resizeObs?.disconnect()
+  popup?.remove()
+  threeRenderer?.dispose()
+  signRenderer?.dispose()
   map?.remove()
 })
 
-watch(() => props.filters, () => {}, { deep: true })
+watch(() => props.filters, (filters) => { applyFilters(filters) }, { deep: true })
 </script>
 
 <template>
   <div class="map-wrapper">
     <!-- Fondo menta cuando no hay mapa base -->
     <div class="map-container" :class="{ 'bg-mint': activeBasemap === 'ninguno' }" ref="mapContainer" />
+
+    <!-- ── Callout overlay: líneas + labels por circuito (solo con filtro activo) ── -->
+    <svg v-if="visibleCallouts.length" class="callout-svg" aria-hidden="true">
+      <g v-for="c in visibleCallouts" :key="c.name + '-line'">
+        <line
+          :x1="c.lineEndX" :y1="c.lineEndY"
+          :x2="c.screenX"  :y2="c.screenY"
+          class="co-line"
+        />
+        <circle :cx="c.screenX" :cy="c.screenY" r="5" class="co-dot" />
+        <circle :cx="c.screenX" :cy="c.screenY" r="3" class="co-dot-inner" />
+      </g>
+    </svg>
+
+    <template v-if="visibleCallouts.length">
+      <div
+        v-for="c in visibleCallouts"
+        :key="c.name + '-label'"
+        class="callout-label"
+        :style="{ left: c.labelX + 'px', top: c.labelY + 'px' }"
+      >
+        <div class="co-name">{{ c.name }}</div>
+        <div class="co-km">
+          <span class="co-km-val">{{ c.km != null ? c.km.toLocaleString('es-CO') : '—' }}</span>
+          <span class="co-km-unit"> Km</span>
+        </div>
+      </div>
+    </template>
+
+    <!-- Letreros verticales (izquierda): subregión + municipio juntos -->
+    <div v-if="selectedSubregion || selectedMunicipio" class="subreg-group">
+      <Transition name="subreg">
+        <span v-if="selectedSubregion" class="subreg-text" :key="'sub-' + selectedSubregion">
+          {{ selectedSubregion }}
+        </span>
+      </Transition>
+      <Transition name="subreg">
+        <span v-if="selectedMunicipio" class="subreg-text subreg-text--sm" :key="'mun-' + selectedMunicipio">
+          {{ selectedMunicipio.charAt(0).toUpperCase() + selectedMunicipio.slice(1).toLowerCase() }}
+        </span>
+      </Transition>
+    </div>
+
+    <!-- Logo A Toda Máquina -->
+    <div class="atm-logo">
+      <img src="/A toda maquina.png" alt="A Toda Máquina" />
+    </div>
+
+    <!-- Tooltip hover municipio -->
+    <Transition name="tooltip">
+      <div
+        v-if="hoverLabel.visible"
+        class="mpio-tooltip"
+        :style="{ left: hoverLabel.x + 'px', top: hoverLabel.y + 'px' }"
+      >{{ hoverLabel.name }}</div>
+    </Transition>
 
     <!-- Letrero de km ejecutados sobre la máquina -->
     <div
@@ -557,6 +1146,7 @@ watch(() => props.filters, () => {}, { deep: true })
 .map-wrapper {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   height: 100%;
   position: relative;
 }
@@ -822,5 +1412,210 @@ watch(() => props.filters, () => {}, { deep: true })
   background: rgba(255, 255, 255, 0.85);
   border-radius: 3px;
   padding: 1px 4px;
+}
+
+/* ── Popup SIMEVA ── */
+:deep(.simeva-popup .maplibregl-popup-content) {
+  border-radius: 10px;
+  padding: 0;
+  overflow: hidden;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.18);
+  font-family: 'Prompt', sans-serif;
+  min-width: 200px;
+}
+:deep(.sp-header) {
+  background: #0b5640;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 9px 14px;
+  line-height: 1.3;
+}
+:deep(.sp-table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+:deep(.sp-key) {
+  color: #6b7280;
+  padding: 5px 10px 5px 14px;
+  white-space: nowrap;
+  vertical-align: top;
+  font-weight: 500;
+}
+:deep(.sp-val) {
+  color: #111827;
+  padding: 5px 14px 5px 6px;
+  font-weight: 600;
+}
+:deep(.sp-table tr:nth-child(even)) {
+  background: #f9fafb;
+}
+
+/* ── Callout overlay ── */
+.callout-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 15;
+  overflow: visible;
+}
+.co-line {
+  stroke: #0b5640;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  opacity: 0.75;
+}
+.co-dot {
+  fill: #ffffff;
+  stroke: #0b5640;
+  stroke-width: 2;
+}
+.co-dot-inner { fill: #0b5640; }
+
+.callout-label {
+  position: absolute;
+  z-index: 16;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 120px;
+  max-width: 175px;
+}
+.co-name {
+  font-family: 'Prompt', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  color: #1a3c2d;
+  line-height: 1.25;
+}
+.co-km {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+  background: #0b5640;
+  border-radius: 6px;
+  padding: 2px 10px 2px 8px;
+}
+.co-km-val {
+  font-family: 'Prompt', sans-serif;
+  font-size: 18px;
+  font-weight: 800;
+  color: #ffffff;
+  line-height: 1;
+}
+.co-km-unit {
+  font-family: 'Prompt', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.85);
+}
+
+/* ── Tooltip hover municipio ── */
+.mpio-tooltip {
+  position: absolute;
+  z-index: 30;
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 10px));
+  background: #0b5640;
+  color: #fff;
+  font-family: 'Prompt', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+}
+.mpio-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #0b5640;
+}
+.tooltip-enter-active, .tooltip-leave-active {
+  transition: opacity .12s ease, transform .12s ease;
+}
+.tooltip-enter-from, .tooltip-leave-to {
+  opacity: 0;
+  transform: translate(-50%, calc(-100% - 6px));
+}
+
+/* ── Letreros verticales ── */
+.subreg-group {
+  position: absolute;
+  top: 24px;
+  left: 18px;
+  z-index: 20;
+  pointer-events: none;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.subreg-text {
+  display: inline-block;
+  writing-mode: vertical-lr;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  font-family: 'Prompt', sans-serif;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #0b5640;
+  text-shadow: 0 2px 8px rgba(255,255,255,0.7);
+  line-height: 1;
+  padding: 4px 0;
+}
+
+.subreg-text--sm {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  color: #1a5c3a;
+  text-shadow: 0 2px 6px rgba(255,255,255,0.65);
+}
+
+/* Animación: sube desde abajo */
+@keyframes subregIn {
+  from { opacity: 0; transform: rotate(180deg) translateY(-30px); }
+  to   { opacity: 1; transform: rotate(180deg) translateY(0);      }
+}
+@keyframes subregOut {
+  from { opacity: 1; transform: rotate(180deg) translateY(0);      }
+  to   { opacity: 0; transform: rotate(180deg) translateY(-20px);  }
+}
+
+.subreg-enter-active .subreg-text {
+  animation: subregIn .42s cubic-bezier(.34,1.10,.64,1) both;
+}
+.subreg-leave-active .subreg-text {
+  animation: subregOut .22s ease-in both;
+}
+
+/* ── Logo A Toda Máquina ── */
+.atm-logo {
+  position: absolute;
+  bottom: 28px;
+  left: 12px;
+  z-index: 20;
+  pointer-events: none;
+}
+.atm-logo img {
+  height: 112px;
+  width: auto;
+  display: block;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 8px rgba(0,0,0,0.22));
 }
 </style>

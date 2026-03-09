@@ -6,13 +6,28 @@ import StatsPanel from './components/organisms/StatsPanel.vue'
 
 const activeFilters = ref({
   search: '',
-  filter1: 'Todas las subregiones',
-  filter2: 'Todos los estados',
-  filter3: 'Todos los años',
+  subregion: 'Todas las subregiones',
+  municipio: 'Todos los municipios',
+  circuito:  'Todos los circuitos',
 })
 const isPanelOpen = ref(true)
 
-const handleFilterChange = (filters) => { activeFilters.value = filters }
+const filterOptions = ref({
+  subregiones: ['Todas las subregiones'],
+  municipios:  ['Todos los municipios'],
+  circuitos:   ['Todos los circuitos'],
+})
+
+const mapStats = ref({
+  viasIntervenidas: 0,
+  longitudTotal:    0,
+  municipios:       0,
+  circuitos:        0,
+})
+
+const handleFilterChange  = (filters) => { activeFilters.value = filters }
+const handleOptionsLoaded = (options) => { filterOptions.value = options }
+const handleStatsLoaded   = (stats)   => { mapStats.value      = stats }
 </script>
 
 <template>
@@ -21,10 +36,23 @@ const handleFilterChange = (filters) => { activeFilters.value = filters }
       @filter-change="handleFilterChange"
       :panel-open="isPanelOpen"
       @toggle-panel="isPanelOpen = !isPanelOpen"
+      :subregion-options="filterOptions.subregiones"
+      :municipio-options="filterOptions.municipios"
+      :circuito-options="filterOptions.circuitos"
     />
     <div class="content-area">
-      <MapView :filters="activeFilters" />
-      <StatsPanel :is-open="isPanelOpen" />
+      <MapView
+        :filters="activeFilters"
+        @options-loaded="handleOptionsLoaded"
+        @stats-loaded="handleStatsLoaded"
+      />
+      <StatsPanel
+        :is-open="isPanelOpen"
+        :vias-intervenidas="mapStats.viasIntervenidas"
+        :longitud-total="mapStats.longitudTotal"
+        :municipios="mapStats.municipios"
+        :circuitos="mapStats.circuitos"
+      />
     </div>
   </div>
 </template>

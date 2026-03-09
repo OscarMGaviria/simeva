@@ -4,35 +4,48 @@ import { Search, X, PanelRightClose, PanelRightOpen } from 'lucide-vue-next'
 import Selector from '../atoms/Selector.vue'
 
 const props = defineProps({
-  title: { type: String, default: 'Dashboard de Pavimentación Vial' },
-  subtitle: { type: String, default: 'Antioquia — Red vial departamental' },
-  filter1Options: { type: Array, default: () => ['Todas las subregiones', 'Urabá', 'Norte', 'Oriente', 'Occidente', 'Suroeste', 'Magdalena Medio', 'Nordeste', 'Bajo Cauca'] },
-  filter2Options: { type: Array, default: () => ['Todos los estados', 'Pavimentada', 'Sin pavimentar', 'En construcción'] },
-  filter3Options: { type: Array, default: () => ['Todos los años', '2020', '2021', '2022', '2023', '2024'] },
+  title: { type: String, default: 'Pavimentación Vial' },
+  subtitle: { type: String, default: 'SIMEVA — Sistema de Información y Monitoreo de vias' },
+  subregionOptions: {
+    type: Array,
+    default: () => [
+      'Todas las subregiones',
+      'Valle de Aburrá', 'Urabá', 'Norte', 'Oriente',
+      'Occidente', 'Suroeste', 'Magdalena Medio', 'Nordeste', 'Bajo Cauca',
+    ],
+  },
+  municipioOptions: {
+    type: Array,
+    default: () => ['Todos los municipios'],
+  },
+  circuitoOptions: {
+    type: Array,
+    default: () => ['Todos los circuitos'],
+  },
   panelOpen: { type: Boolean, default: true },
 })
 
 const emit = defineEmits(['filter-change', 'toggle-panel'])
 
-const searchText  = ref('')
-const filter1Val  = ref(props.filter1Options[0])
-const filter2Val  = ref(props.filter2Options[0])
-const filter3Val  = ref(props.filter3Options[0])
+const searchText   = ref('')
+const subregionVal = ref(props.subregionOptions[0])
+const municipioVal = ref(props.municipioOptions[0])
+const circuitoVal  = ref(props.circuitoOptions[0])
 
 const emitFilters = () => {
   emit('filter-change', {
-    search: searchText.value,
-    filter1: filter1Val.value,
-    filter2: filter2Val.value,
-    filter3: filter3Val.value,
+    search:    searchText.value,
+    subregion: subregionVal.value,
+    municipio: municipioVal.value,
+    circuito:  circuitoVal.value,
   })
 }
 
 const clearFilters = () => {
-  searchText.value = ''
-  filter1Val.value = props.filter1Options[0]
-  filter2Val.value = props.filter2Options[0]
-  filter3Val.value = props.filter3Options[0]
+  searchText.value   = ''
+  subregionVal.value = props.subregionOptions[0]
+  municipioVal.value = props.municipioOptions[0]
+  circuitoVal.value  = props.circuitoOptions[0]
   emitFilters()
 }
 </script>
@@ -43,12 +56,7 @@ const clearFilters = () => {
     <!-- LEFT: logo + branding -->
     <div class="header-brand">
       <div class="header-logo">
-        <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect width="40" height="40" rx="10" fill="rgba(255,255,255,0.15)"/>
-          <path d="M8 28 L20 12 L32 28" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M14 28 L26 28" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round"/>
-          <circle cx="20" cy="12" r="2.5" fill="#ffffff"/>
-        </svg>
+        <img src="/Escudo de armas.png" alt="Gobernación de Antioquia" class="header-logo-img" />
       </div>
       <div class="header-titles">
         <h1 class="header-title">{{ title }}</h1>
@@ -73,24 +81,24 @@ const clearFilters = () => {
         />
       </div>
 
-      <!-- Filter 1 -->
+      <!-- Subregión -->
       <Selector
-        v-model="filter1Val"
-        :options="filter1Options"
+        v-model="subregionVal"
+        :options="subregionOptions"
         @update:modelValue="emitFilters"
       />
 
-      <!-- Filter 2 -->
+      <!-- Municipio -->
       <Selector
-        v-model="filter2Val"
-        :options="filter2Options"
+        v-model="municipioVal"
+        :options="municipioOptions"
         @update:modelValue="emitFilters"
       />
 
-      <!-- Filter 3 -->
+      <!-- Circuito -->
       <Selector
-        v-model="filter3Val"
-        :options="filter3Options"
+        v-model="circuitoVal"
+        :options="circuitoOptions"
         @update:modelValue="emitFilters"
       />
 
@@ -153,6 +161,13 @@ const clearFilters = () => {
 .header-logo {
   flex-shrink: 0;
   filter: drop-shadow(0 2px 8px rgba(0,0,0,0.25));
+}
+
+.header-logo-img {
+  height: 60px;
+  width: auto;
+  display: block;
+  object-fit: contain;
 }
 
 .header-titles {
