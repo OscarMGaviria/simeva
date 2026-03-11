@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, onUnmounted } from 'vue'
 import { Route, Ruler, MapPin, GitBranch } from 'lucide-vue-next'
 import StatCard    from '../atoms/StatCard.vue'
 import ProgressRing from '../atoms/ProgressRing.vue'
@@ -22,24 +22,13 @@ const props = defineProps({
   kmPendientes:    { type: Number, default: 634.4 },
 
   // Subregiones
-  subregiones: {
-    type: Array,
-    default: () => [
-      { name: 'Urabá',        km: 110, pct: 3 },
-      { name: 'Norte',        km: 105, pct: 3 },
-      { name: 'Oriente',      km:  98, pct: 0 },
-      { name: 'Occidente',    km:  90, pct: 3 },
-      { name: 'Suroeste',     km:  85, pct: 3 },
-      { name: 'Magdalena M.', km:  68, pct: 3 },
-      { name: 'Nordeste',     km:  62, pct: 3 },
-      { name: 'Bajo Cauca',   km:  28, pct: 3 },
-    ],
-  },
+  subregiones: { type: Array, default: () => [] },
 })
 
 // ── Animate-in control ──────────────────────────────────────────────────────
 const showContent = ref(props.isOpen)
-let openTimer = null
+let openTimer  = null
+let innerTimer = null
 
 // ── Count-up animation ───────────────────────────────────────────────────────
 const dispVias  = ref(0)
@@ -47,20 +36,28 @@ const dispLong  = ref(0)
 const dispMpios = ref(0)
 const dispCirc  = ref(0)
 
+let rafHandles = []
+
 function countUp(dispRef, target, duration = 1000) {
   const from      = dispRef.value
   const startTime = performance.now()
   function step(now) {
     const t      = Math.min((now - startTime) / duration, 1)
-    const eased  = 1 - (1 - t) ** 3           // ease-out cubic
+    const eased  = 1 - (1 - t) ** 3
     dispRef.value = from + (target - from) * eased
-    if (t < 1) requestAnimationFrame(step)
+    if (t < 1) rafHandles.push(requestAnimationFrame(step))
     else dispRef.value = target
   }
-  requestAnimationFrame(step)
+  rafHandles.push(requestAnimationFrame(step))
+}
+
+function cancelAllRafs() {
+  rafHandles.forEach(cancelAnimationFrame)
+  rafHandles = []
 }
 
 function resetCounters() {
+  cancelAllRafs()
   dispVias.value  = 0
   dispLong.value  = 0
   dispMpios.value = 0
@@ -68,6 +65,7 @@ function resetCounters() {
 }
 
 function animateCounters() {
+  cancelAllRafs()
   countUp(dispVias,  props.viasIntervenidas)
   countUp(dispLong,  props.longitudTotal,   1200)
   countUp(dispMpios, props.municipios)
@@ -83,13 +81,11 @@ const fmtCirc  = computed(() => Math.round(dispCirc.value))
 watch(() => props.isOpen, (val) => {
   clearTimeout(openTimer)
   if (val) {
-    // Espera que el panel termine de deslizar (~280ms) antes de mostrar contenido
     openTimer = setTimeout(() => {
       showContent.value = true
-      setTimeout(animateCounters, 80)
+      innerTimer = setTimeout(animateCounters, 80)
     }, 280)
   } else {
-    // Oculta contenido antes de que el panel cierre
     showContent.value = false
     resetCounters()
   }
@@ -101,7 +97,30 @@ watch(
   () => { if (showContent.value) animateCounters() }
 )
 
+onUnmounted(() => {
+  clearTimeout(openTimer)
+  clearTimeout(innerTimer)
+  cancelAllRafs()
+})
+
 // ── Bar chart helpers ───────────────────────────────────────────────────────
+const ABREVIATURAS = {
+  'valle de aburra': 'Valle',
+  'oriente':         'Oriente',
+  'occidente':       'Occidente',
+  'norte':           'Norte',
+  'nordeste':        'Nordeste',
+  'uraba':           'Urabá',
+  'bajo cauca':      'Bajo C.',
+  'magdalena medio': 'Magd. M.',
+  'suroeste':        'Suroeste',
+}
+
+function shortLabel(name) {
+  const key = name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  return ABREVIATURAS[key] ?? name
+}
+
 const maxKm = computed(() => Math.max(...props.subregiones.map(s => s.km), 1))
 
 const yTicks = computed(() => {
@@ -146,7 +165,6 @@ const yTicks = computed(() => {
               :pct="avanceFisicoPct"
               :size="110"
               :stroke="10"
-              label="avance físico"
               sublabel="Ponderado por longitud intervenida"
             />
           </div>
@@ -205,19 +223,24 @@ const yTicks = computed(() => {
 
           <!-- Bars -->
           <div class="chart-area">
+            <!-- Líneas de referencia sutiles -->
             <div class="chart-grid">
-              <div v-for="(_, i) in yTicks" :key="i" class="grid-line" />
+              <div v-for="tick in yTicks" :key="tick" class="grid-line" />
             </div>
 
-            <div v-for="s in subregiones" :key="s.name" class="bar-col">
+            <div v-for="(s, i) in subregiones" :key="s.name" class="bar-col">
               <div class="bar-outer">
-                <span class="bar-badge">{{ s.pct }}%</span>
+                <span v-if="s.km > 0" class="bar-badge">{{ s.km }} km</span>
                 <div
                   class="bar-fill"
-                  :style="{ height: (s.km / maxKm * 100) + '%' }"
+                  :class="{ 'bar-fill--empty': s.km === 0 }"
+                  :style="{
+                    height: s.km > 0 ? Math.max((s.km / maxKm * 100), 4) + '%' : '4px',
+                    animationDelay: (i * 80) + 'ms'
+                  }"
                 />
               </div>
-              <span class="bar-label">{{ s.name }}</span>
+              <span class="bar-label" :title="s.name">{{ shortLabel(s.name) }}</span>
             </div>
           </div>
 
@@ -345,8 +368,7 @@ const yTicks = computed(() => {
   font-size: 11px;
   font-weight: 700;
   color: #374151;
-  text-transform: uppercase;
-  letter-spacing: .04em;
+  letter-spacing: .02em;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -411,7 +433,7 @@ const yTicks = computed(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  min-height: 160px;
   box-shadow: 0 4px 20px rgba(11,86,64,.08), 0 1px 4px rgba(0,0,0,.05),
               inset 0 1px 0 rgba(255,255,255,0.6);
 }
@@ -423,13 +445,13 @@ const yTicks = computed(() => {
   font-size: 12px;
   font-weight: 700;
   color: #1f2937;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   flex-shrink: 0;
 }
 
 .chart-body {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   flex: 1;
   min-height: 0;
 }
@@ -439,11 +461,12 @@ const yTicks = computed(() => {
   flex-direction: column;
   justify-content: space-between;
   align-items: flex-end;
-  padding-bottom: 22px;
+  padding-bottom: 24px;
   flex-shrink: 0;
+  width: 34px;
 }
 .y-tick {
-  font-size: 9px;
+  font-size: 8px;
   color: #9ca3af;
   white-space: nowrap;
 }
@@ -453,23 +476,26 @@ const yTicks = computed(() => {
   position: relative;
   display: flex;
   align-items: flex-end;
-  gap: 4px;
-  padding-bottom: 22px;
+  gap: 3px;
+  padding-bottom: 24px;
+  border-bottom: 1.5px solid #c8e6d4;
 }
 
 .chart-grid {
   position: absolute;
   inset: 0;
-  bottom: 22px;
+  bottom: 24px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   pointer-events: none;
+  z-index: 0;
 }
 .grid-line {
   width: 100%;
   height: 1px;
-  background: #d1e9d8;
+  background: rgba(200, 230, 212, 0.6);
+  border-top: 1px dashed rgba(180, 220, 196, 0.7);
 }
 
 .bar-col {
@@ -479,6 +505,23 @@ const yTicks = computed(() => {
   align-items: center;
   gap: 3px;
   height: 100%;
+  cursor: pointer;
+  position: relative;
+  z-index: 1;
+}
+.bar-col:hover .bar-fill {
+  background: linear-gradient(180deg, #3fad72 0%, #236b46 100%);
+  width: 90%;
+  box-shadow: 0 -4px 12px rgba(45, 134, 83, 0.5);
+  transform: scaleY(1) translateY(-3px);
+}
+.bar-col:hover .bar-label {
+  color: #1a5c3a;
+  font-weight: 700;
+}
+.bar-col:hover .bar-badge {
+  background: rgba(45, 134, 83, 0.7);
+  transform: translateX(-50%) translateY(-4px) scale(1.1);
 }
 .bar-outer {
   flex: 1;
@@ -502,13 +545,48 @@ const yTicks = computed(() => {
   border-radius: 3px;
   white-space: nowrap;
   z-index: 1;
+  animation: fadeDown .4s ease both;
+  animation-delay: inherit;
+  transition: background .25s ease, transform .25s ease;
+}
+
+@keyframes fadeDown {
+  from { opacity: 0; transform: translateX(-50%) translateY(-6px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 .bar-fill {
   width: 78%;
   border-radius: 4px 4px 0 0;
   min-height: 4px;
-  background: #1a5c3a;
-  transition: height .65s cubic-bezier(.4,0,.2,1);
+  background: linear-gradient(180deg, #2d8653 0%, #1a5c3a 100%);
+  animation: barGrow .7s cubic-bezier(.34,1.10,.64,1) both;
+  transform-origin: bottom;
+  transition: width .25s ease, background .25s ease, box-shadow .25s ease, transform .25s ease;
+}
+
+@keyframes barGrow {
+  from { transform: scaleY(0); opacity: 0; }
+  to   { transform: scaleY(1); opacity: 1; }
+}
+
+.bar-fill--empty {
+  background: repeating-linear-gradient(
+    45deg,
+    #d1e9d8,
+    #d1e9d8 2px,
+    transparent 2px,
+    transparent 6px
+  ) !important;
+  border: 1px dashed #b0d9be;
+  border-radius: 3px;
+  opacity: 0.7;
+  box-shadow: none !important;
+  height: 8px !important;
+}
+.bar-col:hover .bar-fill--empty {
+  opacity: 1;
+  transform: none !important;
+  width: 78% !important;
 }
 .bar-label {
   font-size: 8px;
@@ -519,5 +597,6 @@ const yTicks = computed(() => {
   display: flex;
   align-items: flex-end;
   justify-content: center;
+  transition: color .25s ease, font-weight .25s ease;
 }
 </style>

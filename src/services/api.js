@@ -1,6 +1,6 @@
 const ENDPOINTS = {
-  localizaciones: 'https://a2c20de4-18de-4c7e-b253-88c2fd0c0b3f.mock.pstmn.io/maps/geojson/SIMEVA/localizaciones',
-  municipios:     'https://78577c12-0232-4b96-8123-281e22b01558.mock.pstmn.io/maps/geojson/SIMEVA/municipios',
+  localizaciones: import.meta.env.VITE_API_LOCALIZACIONES,
+  municipios:     import.meta.env.VITE_API_MUNICIPIOS,
 }
 
 async function fetchGeoJSON(url) {
@@ -81,6 +81,38 @@ export const getMunicipios     = () => fetchGeoJSON(ENDPOINTS.municipios)
  * Intenta extraer el valor numérico de km del objeto parseado de descripción.
  * Busca claves como "Longitud", "Km", "Kilómetros", o valores con "km" en el texto.
  */
+/**
+ * Calcula la longitud real de una geometría GeoJSON (LineString o MultiLineString)
+ * usando la fórmula de Haversine. Retorna kilómetros.
+ */
+export function calcGeomKm(geometry) {
+  if (!geometry) return 0
+
+  function haversine(a, b) {
+    const R    = 6371
+    const dLat = (b[1] - a[1]) * Math.PI / 180
+    const dLng = (b[0] - a[0]) * Math.PI / 180
+    const s    = Math.sin(dLat / 2) ** 2
+               + Math.cos(a[1] * Math.PI / 180) * Math.cos(b[1] * Math.PI / 180)
+               * Math.sin(dLng / 2) ** 2
+    return 2 * R * Math.asin(Math.sqrt(s))
+  }
+
+  function lineKm(coords) {
+    let total = 0
+    for (let i = 0; i < coords.length - 1; i++) total += haversine(coords[i], coords[i + 1])
+    return total
+  }
+
+  if (geometry.type === 'LineString')
+    return lineKm(geometry.coordinates)
+
+  if (geometry.type === 'MultiLineString')
+    return geometry.coordinates.reduce((sum, line) => sum + lineKm(line), 0)
+
+  return 0
+}
+
 export function extractKm(desc) {
   if (!desc || typeof desc !== 'object') return null
   // Buscar clave que hable de longitud/km

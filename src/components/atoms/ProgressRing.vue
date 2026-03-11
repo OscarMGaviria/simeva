@@ -89,6 +89,7 @@ const cx   = computed(() => props.size / 2)
   color: #6b7280;
   margin-top: 2px;
   font-weight: 500;
+  white-space: nowrap;
 }
 .ring-sublabel {
   font-size: 10px;

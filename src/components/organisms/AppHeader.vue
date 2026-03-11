@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { Search, X, PanelRightClose, PanelRightOpen } from 'lucide-vue-next'
 import Selector from '../atoms/Selector.vue'
 
@@ -22,15 +22,22 @@ const props = defineProps({
     type: Array,
     default: () => ['Todos los circuitos'],
   },
-  panelOpen: { type: Boolean, default: true },
+  panelOpen:      { type: Boolean, default: true },
+  initialFilters: { type: Object,  default: null  },
 })
 
 const emit = defineEmits(['filter-change', 'toggle-panel'])
 
-const searchText   = ref('')
-const subregionVal = ref(props.subregionOptions[0])
-const municipioVal = ref(props.municipioOptions[0])
-const circuitoVal  = ref(props.circuitoOptions[0])
+const searchText   = ref(props.initialFilters?.search    ?? '')
+const subregionVal = ref(props.initialFilters?.subregion ?? props.subregionOptions[0])
+const municipioVal = ref(props.initialFilters?.municipio ?? props.municipioOptions[0])
+const circuitoVal  = ref(props.initialFilters?.circuito  ?? props.circuitoOptions[0])
+
+// Resetear municipio al cambiar subregión y re-emitir
+watch(subregionVal, () => {
+  municipioVal.value = props.municipioOptions[0]
+  emitFilters()
+})
 
 const emitFilters = () => {
   emit('filter-change', {
@@ -44,8 +51,8 @@ const emitFilters = () => {
 const clearFilters = () => {
   searchText.value   = ''
   subregionVal.value = props.subregionOptions[0]
-  municipioVal.value = props.municipioOptions[0]
   circuitoVal.value  = props.circuitoOptions[0]
+  // municipioVal se resetea automáticamente por el watcher de subregionVal
   emitFilters()
 }
 </script>
