@@ -1,53 +1,34 @@
 <script setup>
-import { ref }           from 'vue'
+import { ref } from 'vue'
 import { Layers, Mountain } from 'lucide-vue-next'
-import { useCallouts }   from '../../composables/useCallouts.js'
-import { useMapLayers }  from '../../composables/useMapLayers.js'
-import { useMapFilters } from '../../composables/useMapFilters.js'
-import { useThreeDemo, CAR_ROUTE } from '../../composables/useThreeDemo.js'
-import { useMapInit, BASEMAPS, CENTER, ZOOM } from '../../composables/useMapInit.js'
+import { BASEMAPS } from '../../composables/useMapInit.js'
+import { useMapOrchestrator } from '../../composables/useMapOrchestrator.js'
+import { useMapStore } from '../../stores/useMapStore.js'
+import ViaDetailModal from './ViaDetailModal.vue'
 
-const props = defineProps({ filters: { type: Object, default: () => ({}) } })
-const emit  = defineEmits(['options-loaded', 'stats-loaded'])
-
+const store = useMapStore()
 const mapContainer = ref(null)
-let _map = null   // instancia MapLibre, asignada en onMounted por useMapInit
 
-// ── Callouts ──────────────────────────────────────────────────────────────────
-const { visibleCallouts, buildCallouts, updateCalloutPositions, refreshVisibleCallouts }
-  = useCallouts(() => _map)
-
-// ── Three.js demo ─────────────────────────────────────────────────────────────
-const { kmCovered, labelLeft, labelTop, createPavingLayer, createSignLayer }
-  = useThreeDemo()
-
-// ── Capas SIMEVA ─────────────────────────────────────────────────────────────
-const { loading, loadError, hoverLabel, cachedMunicipios, cachedVias, loadSimeva }
-  = useMapLayers(() => _map, emit, { buildCallouts, updateCalloutPositions })
-
-// ── Filtros ───────────────────────────────────────────────────────────────────
-const { selectedSubregion, selectedMunicipio }
-  = useMapFilters(() => _map, () => props.filters, {
-      cachedMunicipios, cachedVias,
-      center: CENTER, zoom: ZOOM,
-      refreshVisibleCallouts,
-    })
-
-// ── Mapa base e inicialización ────────────────────────────────────────────────
-const { activeBasemap, switcherOpen, terrainActive, switchBasemap, toggleTerrain }
-  = useMapInit(mapContainer, {
-      onMapCreated: (m) => { _map = m },
-      onLoad:       () => loadSimeva(),
-      createPavingLayer,
-      createSignLayer,
-      CAR_ROUTE,
-    })
+const {
+  activeBasemap, switcherOpen, terrainActive, switchBasemap, toggleTerrain,
+  loading, loadError, fromCache, hoverLabel, loadSimeva,
+  selectedVia,
+  selectedSubregion, selectedMunicipio,
+  visibleCallouts,
+} = useMapOrchestrator(mapContainer, () => store.activeFilters)
 </script>
 
 <template>
   <div class="map-wrapper">
     <!-- Fondo menta cuando no hay mapa base -->
     <div class="map-container" :class="{ 'bg-mint': activeBasemap === 'ninguno' }" ref="mapContainer" />
+
+    <!-- Modal detalle de tramo -->
+    <ViaDetailModal
+      v-if="selectedVia"
+      :via="selectedVia"
+      @close="selectedVia = null"
+    />
 
     <!-- Error overlay -->
     <Transition name="loader-fade">
@@ -134,15 +115,12 @@ const { activeBasemap, switcherOpen, terrainActive, switchBasemap, toggleTerrain
       >{{ hoverLabel.name }}</div>
     </Transition>
 
-    <!-- Letrero de km ejecutados sobre la máquina -->
-    <div
-      class="machine-label"
-      :style="{ left: labelLeft + 'px', top: labelTop + 'px' }"
-      v-show="labelLeft > 0"
-    >
-      <span class="ml-km">{{ kmCovered.toFixed(2) }} km</span>
-      <span class="ml-sub">pavimentados</span>
-    </div>
+    <!-- Banner de datos desde caché (offline) -->
+    <Transition name="loader-fade">
+      <div v-if="fromCache" class="cache-banner">
+        Sin conexión — mostrando datos guardados
+      </div>
+    </Transition>
 
     <!-- Botón relieve 3D -->
     <button
@@ -211,58 +189,23 @@ const { activeBasemap, switcherOpen, terrainActive, switchBasemap, toggleTerrain
 }
 
 /* ── Letrero de progreso de pavimentación ── */
-.machine-label {
+/* ── Banner caché offline ── */
+.cache-banner {
   position: absolute;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-  background: #ffffff;
-  border: 2px solid #0b5640;
-  border-radius: 10px;
-  padding: 5px 12px 4px;
-  pointer-events: none;
-  white-space: nowrap;
-  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.18);
-  transform: translate(-50%, calc(-100% - 18px));
-}
-
-/* Triángulo apuntando hacia la máquina */
-.machine-label::after {
-  content: '';
-  position: absolute;
-  top: 100%;
+  top: 10px;
   left: 50%;
   transform: translateX(-50%);
-  border: 7px solid transparent;
-  border-top-color: #0b5640;
-}
-.machine-label::before {
-  content: '';
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  transform: translateX(-50%) translateY(-2px);
-  border: 6px solid transparent;
-  border-top-color: #ffffff;
-  z-index: 1;
-}
-
-.ml-km {
+  z-index: 40;
+  background: rgba(146, 64, 14, 0.92);
+  color: #fef3c7;
   font-family: 'Prompt', sans-serif;
-  font-size: 15px;
-  font-weight: 700;
-  color: #0b5640;
-  line-height: 1.1;
-}
-
-.ml-sub {
-  font-family: 'Prompt', sans-serif;
-  font-size: 10px;
-  font-weight: 400;
-  color: #6b7280;
-  line-height: 1;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 14px;
+  border-radius: 20px;
+  white-space: nowrap;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
 }
 
 /* ── Terrain toggle ── */

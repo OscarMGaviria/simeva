@@ -4,6 +4,8 @@ import { parseDescription, extractKm, calcGeomKm } from '../services/api.js'
 export function useCallouts(getMap) {
   const callouts        = ref([])
   const visibleCallouts = ref([])
+  // Conjunto de nombres que deben mostrarse según el filtro activo (sin importar viewport)
+  let filteredNames = new Set()
 
   function collectCoords(coords, out) {
     if (typeof coords[0] === 'number') out.push(coords)
@@ -115,13 +117,29 @@ export function useCallouts(getMap) {
     updateCalloutPositions()
   }
 
+  function isInViewport(c) {
+    const map = getMap()
+    if (!map || !c.centroid) return false
+    const canvas = map.getCanvas()
+    const W = canvas.offsetWidth
+    const H = canvas.offsetHeight
+    const bounds = map.getBounds()
+    const [lng, lat] = c.centroid
+    // Verificar si el centroide está dentro de los límites geográficos visibles
+    if (lng < bounds.getWest() || lng > bounds.getEast() ||
+        lat < bounds.getSouth() || lat > bounds.getNorth()) return false
+    // Verificar también que la posición en pantalla esté dentro del canvas
+    const screen = map.project(c.centroid)
+    return screen.x >= 0 && screen.x <= W && screen.y >= 0 && screen.y <= H
+  }
+
   function updateCalloutPositions() {
     const map = getMap()
     if (!map) return
     callouts.value = callouts.value.map(computeCalloutLayout)
-    const visNames = new Set(visibleCallouts.value.map(c => c.name))
-    if (visNames.size)
-      visibleCallouts.value = callouts.value.filter(c => visNames.has(c.name))
+    // Mostrar los que corresponden al filtro activo Y están en el viewport
+    if (filteredNames.size)
+      visibleCallouts.value = callouts.value.filter(c => filteredNames.has(c.name) && isInViewport(c))
   }
 
   function refreshVisibleCallouts(filters) {
@@ -135,6 +153,7 @@ export function useCallouts(getMap) {
       (circuito && circuito !== 'Todos los circuitos')
 
     if (!hasFilter) {
+      filteredNames = new Set()
       visibleCallouts.value = []
       return
     }
@@ -149,7 +168,13 @@ export function useCallouts(getMap) {
       if (bySub.length) filtered = bySub
     }
 
-    visibleCallouts.value = filtered.map(computeCalloutLayout)
+    // Guardar el conjunto filtrado (permanente hasta nuevo filtro)
+    filteredNames = new Set(filtered.map(c => c.name))
+
+    // Mostrar solo los que están en el viewport ahora
+    visibleCallouts.value = filtered
+      .filter(isInViewport)
+      .map(computeCalloutLayout)
   }
 
   return { callouts, visibleCallouts, buildCallouts, updateCalloutPositions, refreshVisibleCallouts }

@@ -3,21 +3,55 @@ const ENDPOINTS = {
   municipios:     import.meta.env.VITE_API_MUNICIPIOS,
 }
 
-async function fetchGeoJSON(url) {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`Error ${res.status} fetching ${url}`)
+const CACHE_TTL = 24 * 60 * 60 * 1000 // 24 horas
 
-  const text = await res.text()
+function cacheKey(url) { return `simeva_cache_${url}` }
+
+function readCache(url) {
+  try {
+    const raw = localStorage.getItem(cacheKey(url))
+    if (!raw) return null
+    const { data, ts } = JSON.parse(raw)
+    if (Date.now() - ts > CACHE_TTL) { localStorage.removeItem(cacheKey(url)); return null }
+    return data
+  } catch { return null }
+}
+
+function writeCache(url, data) {
+  try { localStorage.setItem(cacheKey(url), JSON.stringify({ data, ts: Date.now() })) } catch { /* storage lleno */ }
+}
+
+async function fetchGeoJSON(url) {
+  let text
+  try {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`Error ${res.status}`)
+    text = await res.text()
+  } catch (err) {
+    // Sin red o error HTTP → intentar caché
+    const cached = readCache(url)
+    if (cached) { console.warn(`[SIMEVA] Sin conexión — usando caché para ${url}`); return { data: cached, fromCache: true } }
+    throw err
+  }
 
   // Intento 1: JSON válido
-  try { return JSON.parse(text) } catch { /* continúa */ }
+  try {
+    const data = JSON.parse(text)
+    writeCache(url, data)
+    return { data, fromCache: false }
+  } catch { /* continúa */ }
 
-  // Intento 2: el mock puede truncar la respuesta → recuperar features completos
+  // Intento 2: JSON truncado → recuperar features
   const recovered = recoverFeatureCollection(text)
   if (recovered) {
     console.warn(`[SIMEVA] JSON truncado en ${url} — recuperados ${recovered.features.length} features`)
-    return recovered
+    writeCache(url, recovered)
+    return { data: recovered, fromCache: false }
   }
+
+  // Último recurso: caché
+  const cached = readCache(url)
+  if (cached) { console.warn(`[SIMEVA] JSON inválido — usando caché para ${url}`); return { data: cached, fromCache: true } }
 
   throw new Error(`No se pudo parsear el GeoJSON de ${url}`)
 }
@@ -72,6 +106,48 @@ function recoverFeatureCollection(text) {
 
 export const getLocalizaciones = () => fetchGeoJSON(ENDPOINTS.localizaciones)
 export const getMunicipios     = () => fetchGeoJSON(ENDPOINTS.municipios)
+
+/** Extrae URLs de imágenes del HTML de descripción */
+export function extractPhotos(htmlString) {
+  if (!htmlString) return []
+  try {
+    const doc = new DOMParser().parseFromString(htmlString, 'text/html')
+    return [...doc.querySelectorAll('img')]
+      .map(img => img.getAttribute('src'))
+      .filter(src => src && /^https?:\/\//i.test(src))
+  } catch { return [] }
+}
+
+/**
+ * Extrae fotos organizadas en fases (antes/durante/después)
+ * buscando en las propiedades del feature y en el HTML de descripción.
+ */
+export function extractPhotosByPhase(props = {}, htmlDescription = '') {
+  const result = { antes: [], durante: [], despues: [] }
+
+  const PHASE = {
+    antes:   /antes|before|inicio|pre[-_]/i,
+    durante: /durante|during|en[-_]?obra|proceso/i,
+    despues: /despu[eé]s|after|post[-_]|final/i,
+  }
+
+  // Buscar en propiedades del feature
+  for (const [key, val] of Object.entries(props)) {
+    if (!val || typeof val !== 'string') continue
+    const urls = val.split(/[,;\s]+/).filter(v => /^https?:\/\//i.test(v))
+    if (!urls.length) continue
+    for (const [phase, pattern] of Object.entries(PHASE)) {
+      if (pattern.test(key)) { result[phase].push(...urls); break }
+    }
+  }
+
+  // Fallback: imágenes del HTML → poner en "durante"
+  if (!result.antes.length && !result.durante.length && !result.despues.length) {
+    result.durante = extractPhotos(htmlDescription)
+  }
+
+  return result
+}
 
 /**
  * Extrae texto plano de la descripción HTML que viene en cada feature de localizaciones.

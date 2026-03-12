@@ -33,8 +33,22 @@ export function useMapFilters(getMap, filtersRef, { cachedMunicipios, cachedVias
     const circuito = filters.circuito  ?? ''
     const search   = (filters.search   ?? '').toLowerCase()
 
-    selectedSubregion.value = (sub  && sub  !== 'Todas las subregiones') ? sub  : ''
-    selectedMunicipio.value = (mpio && mpio !== 'Todos los municipios')  ? mpio : ''
+    selectedMunicipio.value = (mpio && mpio !== 'Todos los municipios') ? mpio : ''
+
+    if (sub && sub !== 'Todas las subregiones') {
+      selectedSubregion.value = sub
+    } else if (selectedMunicipio.value && cachedMunicipios.value) {
+      // Inferir subregión del municipio seleccionado
+      const feat = cachedMunicipios.value.features.find(
+        f => f.properties.mpio_nombr?.toUpperCase() === mpio.toUpperCase()
+      )
+      const raw = feat?.properties.subregion ?? ''
+      selectedSubregion.value = raw
+        ? raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()
+        : ''
+    } else {
+      selectedSubregion.value = ''
+    }
 
     if (map.getLayer('municipios-fill')) {
       const mpioFilter = ['all']

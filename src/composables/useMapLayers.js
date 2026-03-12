@@ -1,6 +1,5 @@
 import { ref, onUnmounted } from 'vue'
-import maplibregl from 'maplibre-gl'
-import { getLocalizaciones, getMunicipios, parseDescription, extractKm, calcGeomKm } from '../services/api.js'
+import { getLocalizaciones, getMunicipios, parseDescription, extractPhotosByPhase, extractKm, calcGeomKm } from '../services/api.js'
 
 function sentenceCase(str) {
   if (!str) return str
@@ -13,13 +12,14 @@ function capitalize(str) {
   return str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase())
 }
 
-export function useMapLayers(getMap, emit, { buildCallouts, updateCalloutPositions } = {}) {
+export function useMapLayers(getMap, { onOptionsLoaded, onStatsLoaded } = {}, { buildCallouts, updateCalloutPositions } = {}) {
   const loading          = ref(true)
   const loadError        = ref(false)
+  const fromCache        = ref(false)
   const hoverLabel       = ref({ name: '', x: 0, y: 0, visible: false })
+  const selectedVia      = ref(null)
   const cachedMunicipios = ref(null)
   const cachedVias       = ref(null)
-  let popup     = null
   let destroyed = false
 
   onUnmounted(() => {
@@ -37,8 +37,12 @@ export function useMapLayers(getMap, emit, { buildCallouts, updateCalloutPositio
 
     if (destroyed) return
 
-    cachedMunicipios.value = resMunicipios.status === 'fulfilled' ? resMunicipios.value : null
-    cachedVias.value       = resVias.status       === 'fulfilled' ? resVias.value       : null
+    const munResult = resMunicipios.status === 'fulfilled' ? resMunicipios.value : null
+    const viaResult = resVias.status       === 'fulfilled' ? resVias.value       : null
+
+    cachedMunicipios.value = munResult?.data ?? null
+    cachedVias.value       = viaResult?.data ?? null
+    fromCache.value        = !!(munResult?.fromCache || viaResult?.fromCache)
 
     const geoMunicipios = cachedMunicipios.value
     const geoVias       = cachedVias.value
@@ -76,7 +80,7 @@ export function useMapLayers(getMap, emit, { buildCallouts, updateCalloutPositio
       for (const k of Object.keys(municipiosPorSubregion)) municipiosPorSubregion[k].sort()
     }
 
-    emit('options-loaded', {
+    onOptionsLoaded?.({
       subregiones:           ['Todas las subregiones', ...subregiones],
       municipios:            ['Todos los municipios',  ...municipioOpts],
       circuitos:             ['Todos los circuitos',   ...circuitos],
@@ -194,7 +198,7 @@ export function useMapLayers(getMap, emit, { buildCallouts, updateCalloutPositio
       }
     })
 
-    emit('stats-loaded', {
+    onStatsLoaded?.({
       viasIntervenidas: totalCircuitos,
       longitudTotal:    Math.round(longitudTotal * 100) / 100,
       municipios:       uniqueMunicipios,
@@ -292,17 +296,13 @@ export function useMapLayers(getMap, emit, { buildCallouts, updateCalloutPositio
           },
         })
 
-        popup = new maplibregl.Popup({ closeButton: true, maxWidth: '280px', className: 'simeva-popup' })
         map.on('click', 'vias-line', (e) => {
-          const p    = e.features[0].properties
-          const info = parseDescription(p.description)
-          const rows = Object.entries(info)
-            .map(([k, v]) => `<tr><td class="sp-key">${k}</td><td class="sp-val">${v}</td></tr>`)
-            .join('')
-          popup
-            .setLngLat(e.lngLat)
-            .setHTML(`<div class="sp-header">${p.name ?? 'Vía'}</div>${rows ? `<table class="sp-table">${rows}</table>` : ''}`)
-            .addTo(map)
+          const p = e.features[0].properties
+          selectedVia.value = {
+            name:        p.name ?? 'Vía',
+            description: parseDescription(p.description ?? ''),
+            photos:      extractPhotosByPhase(p, p.description ?? ''),
+          }
         })
         map.on('mouseenter', 'vias-line', () => { map.getCanvas().style.cursor = 'pointer' })
         map.on('mouseleave', 'vias-line', () => { map.getCanvas().style.cursor = '' })
@@ -318,5 +318,5 @@ export function useMapLayers(getMap, emit, { buildCallouts, updateCalloutPositio
     loading.value = false
   }
 
-  return { loading, loadError, hoverLabel, cachedMunicipios, cachedVias, loadSimeva }
+  return { loading, loadError, fromCache, hoverLabel, selectedVia, cachedMunicipios, cachedVias, loadSimeva }
 }

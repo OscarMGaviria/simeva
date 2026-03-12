@@ -28,7 +28,7 @@ export const BASEMAPS = [
   { id: 'ninguno', label: 'Ninguno', color: null, tiles: [], attribution: '' },
 ]
 
-export function useMapInit(mapContainer, { onMapCreated, onLoad, createPavingLayer, createSignLayer, CAR_ROUTE } = {}) {
+export function useMapInit(mapContainer, { onMapCreated, onLoad } = {}) {
   const activeBasemap = ref('ninguno')
   const switcherOpen  = ref(false)
   const terrainActive = ref(false)
@@ -41,22 +41,23 @@ export function useMapInit(mapContainer, { onMapCreated, onLoad, createPavingLay
     if (!_map) return
     terrainActive.value = !terrainActive.value
     if (terrainActive.value) {
-      _map.setTerrain({ source: 'terrain-dem', exaggeration: 1.5 })
-      if (!_map.getLayer('sky')) {
+      _map.setTerrain({ source: 'terrain-dem', exaggeration: 2.5 })
+      if (!_map.getLayer('hillshade')) {
         _map.addLayer({
-          id: 'sky',
-          type: 'sky',
+          id: 'hillshade', type: 'hillshade', source: 'terrain-dem',
           paint: {
-            'sky-type': 'atmosphere',
-            'sky-atmosphere-sun': [0.0, 0.0],
-            'sky-atmosphere-sun-intensity': 15,
+            'hillshade-exaggeration':           0.7,
+            'hillshade-shadow-color':           '#1a2e1a',
+            'hillshade-highlight-color':        '#f0f4f0',
+            'hillshade-accent-color':           '#3a5c3a',
+            'hillshade-illumination-direction': 315,
           },
-        })
+        }, 'base-layer')
       }
       _map.easeTo({ pitch: 50, duration: 900 })
     } else {
       _map.setTerrain(null)
-      if (_map.getLayer('sky')) _map.removeLayer('sky')
+      if (_map.getLayer('hillshade')) _map.removeLayer('hillshade')
       _map.easeTo({ pitch: 0, duration: 900 })
     }
   }
@@ -90,6 +91,8 @@ export function useMapInit(mapContainer, { onMapCreated, onLoad, createPavingLay
       },
       center: CENTER,
       zoom:   ZOOM,
+      pitch:   0,
+      bearing: 0,
     })
 
     onMapCreated?.(_map)
@@ -102,34 +105,17 @@ export function useMapInit(mapContainer, { onMapCreated, onLoad, createPavingLay
     resizeObs.observe(mapContainer.value)
 
     _map.on('load', async () => {
+      // DEM: AWS Terrarium — buena cobertura y resolución para los Andes
       _map.addSource('terrain-dem', {
         type: 'raster-dem',
-        url: 'https://demotiles.maplibre.org/terrain-tiles/tiles.json',
+        tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
         tileSize: 256,
+        encoding: 'terrarium',
+        maxzoom: 15,
       })
 
-      _map.addSource('car-route', {
-        type: 'geojson',
-        data: { type: 'Feature', geometry: { type: 'LineString', coordinates: CAR_ROUTE } },
-      })
-      _map.addLayer({
-        id: 'car-route-line', type: 'line', source: 'car-route',
-        layout: { 'line-cap': 'butt', 'line-join': 'round' },
-        paint: { 'line-color': '#9ca3af', 'line-width': 7, 'line-opacity': 0.7, 'line-dasharray': [1.5, 1.5] },
-      })
-
-      _map.addSource('paved-trail', {
-        type: 'geojson',
-        data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [CAR_ROUTE[0], CAR_ROUTE[0]] } },
-      })
-      _map.addLayer({
-        id: 'paved-trail-line', type: 'line', source: 'paved-trail',
-        layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#111827', 'line-width': 7, 'line-opacity': 0.95 },
-      })
-
-      if (createPavingLayer) _map.addLayer(createPavingLayer())
-      if (createSignLayer)   _map.addLayer(createSignLayer())
+      // Terrain y hillshade disponibles pero inactivos al inicio
+      // El usuario los activa con el botón de relieve
 
       await onLoad?.()
     })
