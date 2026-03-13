@@ -5,8 +5,11 @@ import StatCard    from '../atoms/StatCard.vue'
 import ProgressRing from '../atoms/ProgressRing.vue'
 import ProgressBar  from '../atoms/ProgressBar.vue'
 
+const emit = defineEmits(['filter-subregion'])
+
 const props = defineProps({
-  isOpen: { type: Boolean, default: true },
+  isOpen:            { type: Boolean, default: true },
+  activeSubregion:   { type: String,  default: '' },
 
   // KPI
   viasIntervenidas: { type: Number, default: 47 },
@@ -123,6 +126,11 @@ function shortLabel(name) {
 
 const maxKm = computed(() => Math.max(...props.subregiones.map(s => s.km), 1))
 
+function toggleSubregion(name) {
+  const next = props.activeSubregion === name ? 'Todas las subregiones' : name
+  emit('filter-subregion', next)
+}
+
 const yTicks = computed(() => {
   const max  = maxKm.value
   const step = Math.ceil(max / 4 / 10) * 10
@@ -228,7 +236,16 @@ const yTicks = computed(() => {
               <div v-for="tick in yTicks" :key="tick" class="grid-line" />
             </div>
 
-            <div v-for="(s, i) in subregiones" :key="s.name" class="bar-col">
+            <div
+              v-for="(s, i) in subregiones"
+              :key="s.name"
+              class="bar-col"
+              :class="{ 'bar-col--active': activeSubregion === s.name, 'bar-col--dimmed': activeSubregion && activeSubregion !== s.name }"
+              @click="toggleSubregion(s.name)"
+              role="button"
+              :aria-pressed="activeSubregion === s.name"
+              :title="activeSubregion === s.name ? `Quitar filtro: ${s.name}` : `Filtrar por ${s.name}`"
+            >
               <div class="bar-outer">
                 <span v-if="s.km > 0" class="bar-badge">{{ s.km }} km</span>
                 <div
@@ -508,6 +525,25 @@ const yTicks = computed(() => {
   cursor: pointer;
   position: relative;
   z-index: 1;
+}
+.bar-col--active .bar-fill {
+  background: linear-gradient(180deg, #3fad72 0%, #0b5640 100%) !important;
+  box-shadow: 0 0 0 2px #3fad72, 0 4px 12px rgba(11,86,64,.35);
+}
+.bar-col--active .bar-label {
+  color: #0b5640;
+  font-weight: 700;
+}
+.bar-col--active .bar-badge {
+  background: #0b5640;
+  color: #fff;
+}
+.bar-col--dimmed {
+  opacity: 0.38;
+  transition: opacity .2s;
+}
+.bar-col--dimmed:hover {
+  opacity: 0.75;
 }
 .bar-col:hover .bar-fill {
   background: linear-gradient(180deg, #3fad72 0%, #236b46 100%);

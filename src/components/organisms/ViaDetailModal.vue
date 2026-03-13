@@ -301,18 +301,18 @@ onUnmounted(() => {
   letter-spacing: -.01em;
 }
 .btn-x {
-  width: 30px; height: 30px;
+  width: 36px; height: 36px;
   display: flex; align-items: center; justify-content: center;
-  border: 1.5px solid rgba(255,255,255,.22);
+  border: 2px solid rgba(255,255,255,.55);
   border-radius: 8px;
-  background: rgba(255,255,255,.08);
-  color: rgba(255,255,255,.7);
+  background: rgba(255,255,255,.15);
+  color: #fff;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background .15s, color .15s;
+  transition: background .15s, border-color .15s;
 }
-.btn-x svg { width: 13px; height: 13px; }
-.btn-x:hover { background: rgba(255,255,255,.18); color: #fff; }
+.btn-x svg { width: 18px; height: 18px; stroke-width: 2.5; }
+.btn-x:hover { background: rgba(255,255,255,.28); border-color: #fff; }
 
 /* ── Two columns ── */
 .mcols {
