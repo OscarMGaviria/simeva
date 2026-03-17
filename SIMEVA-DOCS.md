@@ -1,213 +1,540 @@
-# SIMEVA — Documentación del Frontend
+# SIMEVA — Documentación Técnica Detallada
 
-**Sistema de Información y Monitoreo de Estabilización Vial de Antioquia**
-Frontend Vue.js — `feature/12856`
+**Sistema de Seguimiento y Monitoreo Vial de Antioquia**
+Secretaría de Infraestructura Física · Gobernación de Antioquia
+Frontend Vue.js — Rama activa: `feature/12856`
 
----
-
-## Stack tecnológico
-
-| Tecnología | Versión | Rol |
-|---|---|---|
-| Vue 3 | ^3.5.25 | Framework UI (Composition API + `<script setup>`) |
-| MapLibre GL | ^5.19.0 | Motor de mapas vectoriales/raster |
-| Three.js | ^0.183.2 | Renderizado 3D personalizado sobre el mapa |
-| Vite | ^7.3.1 | Bundler y servidor de desarrollo |
-| Lucide Vue Next | — | Iconografía SVG |
-| Fuente | Prompt (Google Fonts) | Tipografía corporativa |
+> Documento elaborado conforme a la *Guía de Arquitectura y Buenas Prácticas de Desarrollo* de la Gobernación de Antioquia (Sección 10 — Prácticas de Documentación).
 
 ---
 
-## Arquitectura del proyecto
+## Tabla de contenido
+
+1. [Descripción del sistema](#1-descripción-del-sistema)
+2. [Arquitectura de referencia](#2-arquitectura-de-referencia)
+3. [Estructura de directorios](#3-estructura-de-directorios)
+4. [Componentes — Catálogo](#4-componentes--catálogo)
+5. [Composables — Catálogo](#5-composables--catálogo)
+6. [Flujo de datos](#6-flujo-de-datos)
+7. [Gestión de estado (Pinia)](#7-gestión-de-estado-pinia)
+8. [Capa de servicios](#8-capa-de-servicios)
+9. [Infraestructura Azure](#9-infraestructura-azure)
+10. [Estrategia de caché offline](#10-estrategia-de-caché-offline)
+11. [Estrategia de ramas y commits](#11-estrategia-de-ramas-y-commits)
+12. [Licencias de dependencias](#12-licencias-de-dependencias)
+13. [Pendientes técnicos (deuda técnica)](#13-pendientes-técnicos-deuda-técnica)
+
+---
+
+## 1. Descripción del sistema
+
+SIMEVA es un aplicativo público de consulta ciudadana que permite visualizar el estado de avance del programa de pavimentación y mejoramiento de la red vial departamental de Antioquia. No requiere autenticación.
+
+**Funcionalidades principales:**
+
+| Funcionalidad | Descripción |
+|---|---|
+| Mapa interactivo | Visualización geoespacial de tramos viales sobre fondo configurable |
+| Filtros cruzados | Filtrar por subregión, municipio y circuito desde el encabezado o el gráfico |
+| Panel de estadísticas | KPIs, avance físico, avance en km y distribución por subregión |
+| Modal de detalle de vía | Información completa del tramo al hacer clic sobre él en el mapa |
+| Modales de detalle por card | Tablas detalladas de vías, municipios, circuitos y longitud al hacer clic en cada KPI |
+| Etiquetas flotantes (callouts) | Nombres y longitudes de vías visibles en el viewport al aplicar filtros |
+| Relieve 3D opcional | Activación de terrain DEM con hillshade para visualización topográfica |
+| Caché offline | Datos GeoJSON almacenados en localStorage (TTL 24 h) con indicador visual |
+
+---
+
+## 2. Arquitectura de referencia
+
+El sistema sigue el estilo **Monolito Modular** recomendado por la guía institucional, con separación clara entre capas:
 
 ```
-src/
-├── main.js                          # Entry point — monta App.vue en #app
-├── App.vue                          # Raíz: gestiona filtros activos + layout
-├── style.css                        # Estilos globales y reset
-└── components/
-    ├── atoms/
-    │   ├── Selector.vue             # Dropdown con búsqueda interna
-    │   ├── StatCard.vue             # Tarjeta de métrica (icono + valor + unidad)
-    │   └── Abutton.vue              # Botón reutilizable
-    └── organisms/
-        ├── AppHeader.vue            # Cabecera con logo, título y filtros
-        ├── MapView.vue              # Mapa MapLibre + capa 3D Three.js
-        └── StatsPanel.vue          # Panel lateral con KPIs y cobertura
+┌─────────────────────────────────────────────────┐
+│                  PRESENTACIÓN                   │
+│  App.vue → AppHeader / MapView / StatsPanel     │
+│  (Organisms → Molecules → Atoms)                │
+├─────────────────────────────────────────────────┤
+│               LÓGICA DE APLICACIÓN              │
+│  useMapOrchestrator → useMapInit                │
+│                     → useMapLayers              │
+│                     → useMapFilters             │
+│                     → useCallouts               │
+├─────────────────────────────────────────────────┤
+│                ESTADO GLOBAL                    │
+│  Pinia — useMapStore                            │
+│  (activeFilters, filterOptions, mapStats)       │
+├─────────────────────────────────────────────────┤
+│                   SERVICIOS                     │
+│  api.js — fetchGeoJSON + caché localStorage     │
+├─────────────────────────────────────────────────┤
+│              INFRAESTRUCTURA AZURE              │
+│  Static Web App → API Management               │
+│                 → Function App → Blob Storage  │
+└─────────────────────────────────────────────────┘
+```
+
+**Patrón Atomic Design aplicado al frontend:**
+
+- **Atoms**: Componentes sin dependencias (`StatCard`, `Selector`, `ProgressBar`, `ProgressRing`)
+- **Molecules**: Composiciones de átomos (`FilterBar`, `LabeledSelector`)
+- **Organisms**: Secciones completas de página (`AppHeader`, `MapView`, `StatsPanel`, `ViaDetailModal`, `StatsDetailModal`)
+
+---
+
+## 3. Estructura de directorios
+
+```
+SIMEVA-FRONTEND/
+├── .env.example                     # Plantilla de variables de entorno (versionado)
+├── .env                             # Variables locales (NO versionado)
+├── .env.production                  # Variables de producción (versionado sin secretos)
+├── .gitignore
+├── index.html                       # Punto de entrada HTML — monta #app
+├── package.json
+├── vite.config.js
+├── README.md                        # Guía de instalación y operación
+├── SIMEVA-DOCS.md                   # Este documento
+├── docs/
+│   ├── historias-usuario.md         # Historias de usuario con criterios de aceptación
+│   └── api-contratos.md             # Contratos de las APIs consumidas
+└── src/
+    ├── main.js                      # Bootstrap Vue + Pinia
+    ├── App.vue                      # Raíz de la aplicación
+    ├── style.css                    # Reset y estilos globales
+    ├── stores/
+    │   └── useMapStore.js           # Estado global Pinia
+    ├── services/
+    │   └── api.js                   # Cliente HTTP, parsers GeoJSON, caché
+    ├── composables/
+    │   ├── useMapOrchestrator.js    # Coordinador de composables del mapa
+    │   ├── useMapInit.js            # Inicialización de MapLibre GL JS
+    │   ├── useMapLayers.js          # Capas GeoJSON, stats, eventos
+    │   ├── useMapFilters.js         # Filtros sobre capas del mapa
+    │   └── useCallouts.js           # Etiquetas flotantes sobre tramos
+    └── components/
+        ├── atoms/
+        │   ├── Selector.vue
+        │   ├── StatCard.vue
+        │   ├── ProgressBar.vue
+        │   └── ProgressRing.vue
+        ├── molecules/
+        │   ├── FilterBar.vue
+        │   └── LabeledSelector.vue
+        └── organisms/
+            ├── AppHeader.vue
+            ├── MapView.vue
+            ├── StatsPanel.vue
+            ├── ViaDetailModal.vue
+            └── StatsDetailModal.vue
 ```
 
 ---
 
-## Flujo de datos de filtros
+## 4. Componentes — Catálogo
 
-```
-AppHeader.vue
-  emite @filter-change { search, subregion, municipio, circuito }
-         ↓
-App.vue
-  activeFilters (ref) — prop :filters → MapView.vue
-                      — (StatsPanel se conectará en el futuro)
-         ↓
-MapView.vue
-  watch(filters) → llamada al API → setData en fuente GeoJSON del mapa
-```
+### Atoms
 
-### Filtros activos
+#### `StatCard.vue`
+Tarjeta de métrica numérica con icono, valor animado y título.
 
-| Clave | Tipo | Valor por defecto | Descripción |
-|---|---|---|---|
-| `search` | String | `''` | Búsqueda libre por nombre de vía |
-| `subregion` | String | `'Todas las subregiones'` | Subregión de Antioquia |
-| `municipio` | String | `'Todos los municipios'` | Municipio (opciones desde GeoJSON) |
-| `circuito` | String | `'Todos los circuitos'` | Circuito vial (opciones desde GeoJSON) |
+| Prop | Tipo | Requerido | Descripción |
+|------|------|-----------|-------------|
+| `title` | String | Sí | Etiqueta descriptiva de la métrica |
+| `value` | String \| Number | Sí | Valor a mostrar |
+| `unit` | String | No | Unidad (ej. `km`) |
+
+Emite: `click` nativo (delegar al padre con `@click`).
 
 ---
 
-## Componentes
+#### `Selector.vue`
+Dropdown accesible con búsqueda interna.
 
-### `App.vue`
-Raíz de la aplicación. Orquesta layout, estado de filtros y visibilidad del panel lateral.
-
-**Estado:**
-- `activeFilters` — objeto con las 4 claves de filtro actuales.
-- `isPanelOpen` — controla la visibilidad del `StatsPanel`.
-
-**Layout:** columna `flex` → `AppHeader` (fijo arriba) + `content-area` (mapa + panel en fila).
+| Prop | Tipo | Descripción |
+|------|------|-------------|
+| `options` | Array | Lista de cadenas de texto |
+| `modelValue` | String | Valor seleccionado (v-model) |
+| `placeholder` | String | Texto cuando no hay selección |
 
 ---
 
-### `AppHeader.vue`
-Cabecera fija con branding y controles de filtro.
+#### `ProgressRing.vue`
+Indicador circular de progreso SVG.
+
+| Prop | Tipo | Default | Descripción |
+|------|------|---------|-------------|
+| `pct` | Number | 0 | Porcentaje 0–100 |
+| `size` | Number | 110 | Diámetro en px |
+| `stroke` | Number | 10 | Grosor del anillo |
+| `sublabel` | String | — | Texto secundario bajo el porcentaje |
+
+---
+
+#### `ProgressBar.vue`
+Barra de progreso horizontal.
+
+| Prop | Tipo | Descripción |
+|------|------|-------------|
+| `pct` | Number | Porcentaje 0–100 |
+| `color` | String | Color de relleno (hex) |
+| `trackColor` | String | Color de fondo |
+| `height` | Number | Altura en px |
+
+---
+
+### Molecules
+
+#### `FilterBar.vue`
+Grupo de tres selectores (subregión, municipio, circuito) y campo de búsqueda. Emite `filter-change` al cambiar cualquier valor.
+
+#### `LabeledSelector.vue`
+Selector con etiqueta descriptiva encima. Wraps `Selector.vue` con layout vertical.
+
+---
+
+### Organisms
+
+#### `AppHeader.vue`
+Encabezado institucional con logo de la Gobernación, título del sistema, `FilterBar` y botón de apertura/cierre del panel.
+
+**Emits:**
+
+| Evento | Payload | Descripción |
+|--------|---------|-------------|
+| `filter-change` | `{ search, subregion, municipio, circuito }` | Se dispara en cada cambio de filtro |
+| `toggle-panel` | — | Abre/cierra el panel lateral |
+
+---
+
+#### `MapView.vue`
+Contenedor del mapa interactivo. Delega toda la lógica a `useMapOrchestrator`.
 
 **Props:**
-| Prop | Tipo | Default |
-|---|---|---|
-| `title` | String | `'Dashboard de Pavimentación Vial'` |
-| `subtitle` | String | `'Antioquia — Red vial departamental'` |
-| `subregionOptions` | Array | 9 subregiones de Antioquia |
-| `municipioOptions` | Array | `['Todos los municipios']` — se pobla desde GeoJSON |
-| `circuitoOptions` | Array | `['Todos los circuitos']` — se pobla desde GeoJSON |
-| `panelOpen` | Boolean | `true` |
 
-**Emits:** `filter-change(filters)`, `toggle-panel`.
+| Prop | Tipo | Descripción |
+|------|------|-------------|
+| `filters` | Object | Filtros activos desde el store |
 
 ---
 
-### `Selector.vue`
-Dropdown personalizado con buscador interno. Reemplaza el `<select>` nativo.
+#### `StatsPanel.vue`
+Panel lateral derecho con:
+- 4 tarjetas KPI (vías, longitud, municipios, circuitos) — cada una abre su modal de detalle
+- Sección de avance físico (ProgressRing) y avance en km (ProgressBar)
+- Gráfico de barras por subregión (interactivo — aplica filtro al hacer clic)
 
-**Props:** `options: Array`, `modelValue: String`
-**Emits:** `update:modelValue`
+**Props principales:**
 
-Características:
-- Cierra automáticamente al hacer clic fuera (`mousedown` global).
-- Filtra opciones en tiempo real por el texto buscado.
-- Resalta la opción seleccionada con ícono `Check`.
-- Animación de apertura/cierre con transición CSS.
+| Prop | Tipo | Descripción |
+|------|------|-------------|
+| `isOpen` | Boolean | Controla visibilidad del panel |
+| `viasIntervenidas` | Number | Total de tramos |
+| `longitudTotal` | Number | Km totales |
+| `municipios` | Number | Municipios únicos |
+| `circuitos` | Number | Circuitos totales |
+| `avanceFisicoPct` | Number | % avance físico ponderado |
+| `subregiones` | Array | `[{ name, km, pct }]` para el gráfico |
+| `viasDetalle` | Array | Detalle por vía para los modales |
+
+**Emits:** `filter-subregion(nombre)` al hacer clic en una barra del gráfico.
 
 ---
 
-### `MapView.vue`
-Componente central. Renderiza el mapa MapLibre e integra la capa 3D de Three.js.
+#### `ViaDetailModal.vue`
+Modal de detalle de un tramo al hacer clic en el mapa.
 
-**Props:** `filters: Object`
+**Props:**
 
-#### Mapas base disponibles
+| Prop | Tipo | Descripción |
+|------|------|-------------|
+| `via` | Object | `{ name, description, photos: { antes, durante, despues } }` |
 
-| ID | Label | Proveedor |
-|---|---|---|
-| `estandar` | Estándar | OpenStreetMap |
-| `claro` | Claro | CartoCDN Light |
-| `satelite` | Satélite | Esri World Imagery |
-| `oscuro` | Oscuro | CartoCDN Dark |
-| `ninguno` | Ninguno | Sin tiles |
+**Emits:** `close`
 
-#### Controles del mapa
-- `NavigationControl` — zoom y rotación (arriba derecha).
-- `ScaleControl` — escala métrica (abajo izquierda).
-- `GeolocateControl` — geolocalización del usuario (arriba derecha).
-- `Basemap Switcher` — selector de mapa base personalizado (abajo derecha).
-- `Terrain Toggle` — activa relieve 3D con exageración 1.5× (abajo derecha).
+---
 
-#### Demo Three.js (temporal — bloque marcado para eliminar)
-Visualización de una **pavimentadora CAT** 3D que recorre la ruta Las Palmas
-(Medellín El Poblado → Aeropuerto Rionegro) con:
-- Rastro de asfalto animado que crece con la máquina.
-- Letrero flotante con km pavimentados en tiempo real.
-- Modelo detallado: chasis, tolva, capó, cabina, screed, auger, orugas.
+#### `StatsDetailModal.vue`
+Modal con 4 vistas de detalle para cada card KPI.
 
-**Fuentes GeoJSON del mapa (pendientes de conectar a API):**
-- `vias-geojson` — vías de la red vial departamental (se actualizará con filtros).
-- `car-route` — ruta demo de la pavimentadora.
-- `paved-trail` — rastro dinámico del demo.
+**Props:**
 
-#### Conexión pendiente al API (watch vacío en `MapView.vue:491`)
+| Prop | Tipo | Descripción |
+|------|------|-------------|
+| `tipo` | String | `'vias'` \| `'longitud'` \| `'municipios'` \| `'circuitos'` |
+| `viasDetalle` | Array | Array de objetos de vía con campos normalizados |
+| `subregiones` | Array | Array `[{ name, km, pct }]` |
+
+**Emits:** `close`
+
+Características UX: búsqueda en tiempo real, ordenamiento por columna, cierre con `Esc`.
+
+---
+
+## 5. Composables — Catálogo
+
+### `useMapOrchestrator(mapContainer, filtersGetter)`
+Punto de entrada único para toda la lógica del mapa. Coordina los cuatro composables internos y expone las APIs necesarias para `MapView`.
+
+**Retorna:**
+
+| Ref / Función | Tipo | Descripción |
+|---------------|------|-------------|
+| `loading` | Ref\<Boolean\> | Datos en carga |
+| `loadError` | Ref\<Boolean\> | Error al cargar |
+| `fromCache` | Ref\<Boolean\> | Datos provenientes de caché |
+| `hoverLabel` | Ref\<String\> | Nombre del tramo bajo el cursor |
+| `selectedVia` | Ref\<Object\> | Tramo seleccionado (abre ViaDetailModal) |
+| `selectedSubregion` | Ref\<String\> | Subregión activa en el mapa |
+| `selectedMunicipio` | Ref\<String\> | Municipio activo en el mapa |
+| `visibleCallouts` | Ref\<Array\> | Callouts activos en viewport |
+| `activeBasemap` | Ref\<String\> | ID del basemap activo |
+| `terrainActive` | Ref\<Boolean\> | Estado del relieve 3D |
+| `switchBasemap(b)` | Función | Cambia el mapa base |
+| `toggleTerrain()` | Función | Activa/desactiva relieve 3D |
+
+---
+
+### `useMapInit(mapContainer, callbacks)`
+Inicializa la instancia de MapLibre GL. Gestiona basemaps, terrain DEM, hillshade, controles de navegación y resize observer.
+
+**Callbacks:**
+
+| Callback | Cuándo se invoca |
+|----------|-----------------|
+| `onMapCreated(map)` | Al construir el mapa |
+| `onLoad()` | Al completar la carga inicial del estilo |
+
+---
+
+### `useMapLayers(getMap, callbacks, helpers)`
+Carga los datos GeoJSON (vías y municipios), construye las capas del mapa y calcula estadísticas.
+
+**Responsabilidades:**
+- Fetch paralelo de vías y municipios (con caché offline)
+- Construcción del objeto `viasDetalle` para los modales
+- Cálculo de KPIs y distribución por subregión
+- Manejo del hover y clic sobre tramos (`selectedVia`)
+- Añadir capas: `municipios-fill`, `municipios-outline`, `municipios-labels`, `vias-line`, `car-route-line`, `paved-trail-line`
+
+**Callbacks:**
+
+| Callback | Payload |
+|----------|---------|
+| `onOptionsLoaded(opts)` | `{ subregiones, municipios, circuitos, municipiosPorSubregion }` |
+| `onStatsLoaded(stats)` | `{ viasIntervenidas, longitudTotal, municipios, circuitos, subregiones, viasDetalle }` |
+
+---
+
+### `useMapFilters(getMap, filtersGetter, config)`
+Aplica filtros de MapLibre sobre las capas `municipios-fill` y `vias-line` en respuesta a cambios en los filtros activos. Infiere subregión automáticamente cuando se selecciona un municipio.
+
+---
+
+### `useCallouts(getMap)`
+Calcula y mantiene las etiquetas flotantes (callouts) de tramos visibles en el viewport.
+
+**Comportamiento:**
+- Al aplicar un filtro, determina qué tramos deben mostrar etiqueta (`filteredNames`)
+- En cada evento `move`/`zoom`, re-evalúa qué etiquetas están dentro del canvas
+- Los labels desaparecen al salir del viewport y reaparecen al volver
+
+---
+
+## 6. Flujo de datos
+
+```
+Usuario
+  │
+  ├── Selecciona filtro en AppHeader
+  │       └── store.setFilter(filters)
+  │               ├── MapView → useMapOrchestrator
+  │               │     └── useMapFilters.applyFilters()
+  │               │           ├── Actualiza capas MapLibre (expressions)
+  │               │           └── useCallouts.refreshVisibleCallouts()
+  │               └── StatsPanel recibe viasDetalle filtrado
+  │
+  ├── Hace clic en barra del gráfico de subregiones
+  │       └── StatsPanel emite 'filter-subregion'
+  │               └── App.vue → store.setFilter()  (misma cadena)
+  │
+  ├── Hace clic en tramo del mapa
+  │       └── useMapLayers → selectedVia.value = { ... }
+  │               └── MapView muestra ViaDetailModal
+  │
+  └── Hace clic en card KPI
+          └── StatsPanel → modalTipo.value = tipo
+                  └── StatsDetailModal con viasDetalle + subregiones
+```
+
+---
+
+## 7. Gestión de estado (Pinia)
+
+### `useMapStore` — Estado global
+
 ```js
-watch(() => props.filters, (_filters) => {
-  // TODO: llamar al API Management con los filtros
-  // y actualizar map.getSource('vias-geojson').setData(geojson)
-}, { deep: true })
+// Estado reactivo
+activeFilters: {
+  search:    '',
+  subregion: 'Todas las subregiones',
+  municipio: 'Todos los municipios',
+  circuito:  'Todos los circuitos',
+}
+
+filterOptions: {
+  subregiones:            ['Todas las subregiones', ...],
+  municipios:             ['Todos los municipios',  ...],
+  circuitos:              ['Todos los circuitos',   ...],
+  municipiosPorSubregion: { 'Urabá': ['Arboletes', ...], ... },
+}
+
+mapStats: {
+  viasIntervenidas: Number,
+  longitudTotal:    Number,
+  municipios:       Number,
+  circuitos:        Number,
+  subregiones:      [{ name, km, pct }],
+  viasDetalle:      [{ nombre, codigo, municipio, subregion, km, avance, contratista, fechaInicio, plazo, circuito }],
+}
+
+// Computed
+filteredMunicipioOptions: // filtra municipios según subregión activa
+
+// Acciones
+setFilter(filters)        // actualiza activeFilters (resetea municipio si cambia subregión)
+setFilterOptions(options) // poblado por useMapLayers al cargar datos
+setMapStats(stats)        // poblado por useMapLayers al cargar datos
 ```
 
----
-
-### `StatsPanel.vue`
-Panel lateral deslizable con estadísticas de la red vial.
-
-**Props:** `isOpen: Boolean`
-
-**Contenido actual (datos estáticos de demostración):**
-- 4 tarjetas `StatCard`: Red Vial Total, Pavimentadas, En Ejecución, Por Ejecutar.
-- Barras de cobertura animadas por subregión (9 subregiones).
-
-**Animaciones:**
-- Apertura/cierre: transición CSS de `width` (`.38s cubic-bezier`).
-- Cards: `fadeSlideUp` escalonado al aparecer.
-- Barras: `fadeSlideRight` escalonado + transición de ancho al rellenar.
+**Decisión de diseño:** Los filtros no se persisten en la URL ni en sessionStorage. Cada recarga inicia con el estado limpio por defecto, garantizando que el ciudadano siempre vea la vista completa al entrar.
 
 ---
 
-### `StatCard.vue`
-Átomo reutilizable para mostrar una métrica con ícono, valor y unidad.
+## 8. Capa de servicios
 
-**Props:** `title: String`, `value: String|Number`, `unit: String`
-**Slot:** ícono Lucide (cualquier componente de ícono).
+### `api.js` — Funciones exportadas
+
+| Función | Descripción |
+|---------|-------------|
+| `fetchGeoJSON(url, cacheKey)` | Fetch con caché localStorage TTL 24 h. Retorna GeoJSON o null |
+| `parseDescription(html)` | Parsea tabla HTML de KML → objeto clave-valor |
+| `extractKm(desc)` | Extrae longitud en km del objeto de descripción |
+| `calcGeomKm(geometry)` | Calcula km geodésicos de una geometría LineString/MultiLineString |
+| `extractPhotosByPhase(props, html)` | Extrae URLs de fotos clasificadas en `{ antes, durante, despues }` |
+
+**Caché offline:**
+- Clave: `simeva_cache_{cacheKey}`
+- Valor: `{ ts: Date.now(), data: GeoJSON }`
+- TTL: 86 400 000 ms (24 horas)
+- Ante fallo de red, intenta leer del caché aunque haya expirado
 
 ---
 
-## Infraestructura Azure (IaC — Bicep)
-
-El frontend se despliega en un **Azure Static Web App** (Free tier) con CI/CD automático via GitHub Actions. El mapa de servicios completo:
+## 9. Infraestructura Azure
 
 ```
-Usuario (HTTPS)
-    └─▶ Azure Front Door + CDN   (Standard)
-           └─▶ Static Web App     (Vue.js — Free)
-                  └─▶ API Management (Consumption — CORS habilitado, 10 req/seg)
-                         └─▶ Function App (dotnet-isolated — GetGeoJSON)
-                                └─▶ Blob Storage (Standard LRS — contenedor: geojson/)
+Ciudadano (HTTPS/TLS 1.2+)
+    └─▶ Azure Front Door Standard (CDN + WAF)
+           └─▶ Azure Static Web App — Free
+                  (Despliega /dist generado por Vite)
+                  └─▶ Azure API Management — Consumption
+                         (CORS, throttling, Ocp-Apim-Subscription-Key)
+                         └─▶ Azure Function App — Consumption
+                                (dotnet-isolated, GetGeoJSON trigger HTTP)
+                                └─▶ Azure Blob Storage
+                                       (contenedor: geojson/, acceso privado)
 ```
 
-| Recurso | Nombre prod | Tier |
-|---|---|---|
-| Static Web App | `stapp-simeva-prod` | Free |
-| API Management | `apim-simeva-prod` | Consumption |
-| Function App | `func-simeva-prod-getgeojson` | Consumption |
-| Storage Account | `stsimevaprod` | Standard LRS |
-| Front Door | `afd-simeva-prod` | Standard |
-| Log Analytics | `log-simeva-prod` | PerGB2018 |
-| App Insights | `appi-simeva-prod` | Web |
+| Recurso | Nombre sugerido | Tier | Rol |
+|---------|----------------|------|-----|
+| Static Web App | `stapp-simeva-prod` | Free | Hosting SPA |
+| API Management | `apim-simeva-prod` | Consumption | Gateway seguro |
+| Function App | `func-simeva-prod` | Consumption | Proxy GeoJSON |
+| Storage Account | `stsimevaprod` | Standard LRS | Archivos GeoJSON |
+| Front Door | `afd-simeva-prod` | Standard | CDN + WAF |
 
-La Function App usa **Managed Identity** con rol `Storage Blob Data Reader` — sin connection strings en el código.
+**Seguridad aplicada:**
+- La Function App usa **Managed Identity** con rol `Storage Blob Data Reader` — sin connection strings en código fuente
+- TLS 1.2+ obligatorio en toda la cadena
+- CORS configurado en APIM para permitir solo el dominio de producción
+- No se almacenan datos personales de ciudadanos — cumple Ley 1581
 
 ---
 
-## Pendientes / Próximos pasos
+## 10. Estrategia de caché offline
 
-- [ ] Recibir endpoint del API Management y conectarlo en `MapView.vue`.
-- [ ] Poblar `municipioOptions` y `circuitoOptions` dinámicamente desde el GeoJSON inicial.
-- [ ] Implementar el `watch` de filtros: fetch → `setData` en fuente `vias-geojson`.
-- [ ] Conectar `StatsPanel` a datos reales (km por subregión desde la API).
-- [ ] Eliminar el bloque demo de Three.js (pavimentadora) cuando se integren datos reales.
-- [ ] Definir estilo de capas GeoJSON (colores por estado/circuito/subregión).
-- [ ] Agregar popups al hacer clic en una vía del mapa.
+El frontend implementa una capa de caché en `localStorage` para garantizar disponibilidad ante fallos de red:
+
+```
+fetchGeoJSON(url, cacheKey)
+  ├── Intenta fetch de la URL
+  │     ├── Éxito → guarda en localStorage con timestamp → retorna data
+  │     └── Error → busca en localStorage
+  │               ├── Cacheado < 24h → retorna data + fromCache = true
+  │               └── Cacheado > 24h → retorna data + fromCache = true (fallback)
+  └── Sin caché y sin red → retorna null → loadError = true
+```
+
+Cuando `fromCache = true`, el mapa muestra un banner informativo al usuario.
+
+---
+
+## 11. Estrategia de ramas y commits
+
+Conforme a la *Guía de Arquitectura* (Sección 5):
+
+| Rama | Propósito |
+|------|-----------|
+| `master` | Producción estable — solo merges con aprobación de QA |
+| `develop` | Integración continua — merges de features |
+| `feature/*` | Desarrollo de funcionalidades (ej. `feature/12856`) |
+
+**Convención de commits (Conventional Commits):**
+
+```
+feat:     Nueva funcionalidad
+fix:      Corrección de bug
+refactor: Reestructuración sin cambio de comportamiento
+docs:     Cambios en documentación
+chore:    Configuración, dependencias, tareas auxiliares
+```
+
+**Idioma:** Variables, comentarios y mensajes de commit en **español neutro**, conforme al estándar institucional.
+
+---
+
+## 12. Licencias de dependencias
+
+Verificación de compatibilidad con uso institucional (Sección 9 — Licenciamiento):
+
+| Dependencia | Versión | Licencia | Compatible |
+|-------------|---------|----------|-----------|
+| Vue 3 | ^3.5.x | MIT | Sí |
+| Pinia | ^3.x | MIT | Sí |
+| Vite | ^7.x | MIT | Sí |
+| MapLibre GL JS | ^5.x | BSD-3-Clause | Sí |
+| Lucide Vue Next | latest | ISC | Sí |
+| Three.js | ^0.183 | MIT | Sí (dependencia residual — pendiente de eliminar) |
+
+> Ninguna dependencia usa licencia GPL u otra licencia restrictiva que obligue a liberar el código propietario de la Gobernación.
+
+---
+
+## 13. Pendientes técnicos (deuda técnica)
+
+| Ítem | Prioridad | Descripción |
+|------|-----------|-------------|
+| API de producción | Alta | Reemplazar endpoints mock de Postman (`mock.pstmn.io`) por API Management real |
+| Three.js | Media | Paquete instalado pero sin uso activo — remover de `package.json` |
+| Pruebas unitarias (Jest/Vitest) | Media | No existe suite de pruebas. Meta: >80% cobertura en `api.js` y composables |
+| Pruebas de accesibilidad WCAG 2.1 AA | Media | Validar con WAVE — requerido por Res. 1519/2020 |
+| TypeScript | Baja | Migración progresiva para tipado de contratos GeoJSON |
+| Análisis estático (ESLint) | Baja | Configurar ESLint + reglas Vue 3 en el pipeline CI |
+| Manual de despliegue | Media | Documentar proceso de CI/CD en Azure DevOps (pipelines YAML) |
+
+---
+
+*Gobernación de Antioquia · Secretaría de Infraestructura Física*
+*Sistema de Seguimiento y Monitoreo Vial — SIMEVA*
+*Versión del documento: 2.0 — Marzo 2026*
