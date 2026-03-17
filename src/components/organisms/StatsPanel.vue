@@ -1,9 +1,10 @@
 <script setup>
 import { ref, watch, computed, onUnmounted } from 'vue'
 import { Route, Ruler, MapPin, GitBranch } from 'lucide-vue-next'
-import StatCard    from '../atoms/StatCard.vue'
-import ProgressRing from '../atoms/ProgressRing.vue'
-import ProgressBar  from '../atoms/ProgressBar.vue'
+import StatCard       from '../atoms/StatCard.vue'
+import ProgressRing   from '../atoms/ProgressRing.vue'
+import ProgressBar    from '../atoms/ProgressBar.vue'
+import StatsDetailModal from './StatsDetailModal.vue'
 
 const emit = defineEmits(['filter-subregion'])
 
@@ -26,7 +27,15 @@ const props = defineProps({
 
   // Subregiones
   subregiones: { type: Array, default: () => [] },
+
+  // Detalle de vías para modales
+  viasDetalle: { type: Array, default: () => [] },
 })
+
+// ── Modal de detalle ──────────────────────────────────────────────────────
+const modalTipo = ref(null) // 'vias' | 'longitud' | 'municipios' | 'circuitos'
+function abrirModal(tipo) { modalTipo.value = tipo }
+function cerrarModal()    { modalTipo.value = null }
 
 // ── Animate-in control ──────────────────────────────────────────────────────
 const showContent = ref(props.isOpen)
@@ -146,19 +155,28 @@ const yTicks = computed(() => {
 
       <!-- ── KPI cards ─────────────────────────────────────────────────── -->
       <div class="cards-row" :class="{ animate: showContent }">
-        <StatCard title="Vías intervenidas" :value="fmtVias">
+        <StatCard title="Vías intervenidas" :value="fmtVias" @click="abrirModal('vias')" title-attr="Ver detalle de vías">
           <Route :size="18" />
         </StatCard>
-        <StatCard title="Longitud total" :value="fmtLong" unit="km">
+        <StatCard title="Longitud total" :value="fmtLong" unit="km" @click="abrirModal('longitud')" title-attr="Ver distribución por subregión">
           <Ruler :size="18" />
         </StatCard>
-        <StatCard title="Municipios" :value="fmtMpios">
+        <StatCard title="Municipios" :value="fmtMpios" @click="abrirModal('municipios')" title-attr="Ver detalle por municipio">
           <MapPin :size="18" />
         </StatCard>
-        <StatCard title="Circuitos" :value="fmtCirc">
+        <StatCard title="Circuitos" :value="fmtCirc" @click="abrirModal('circuitos')" title-attr="Ver detalle de circuitos">
           <GitBranch :size="18" />
         </StatCard>
       </div>
+
+      <!-- ── Modal de detalle ───────────────────────────────────────────── -->
+      <StatsDetailModal
+        v-if="modalTipo"
+        :tipo="modalTipo"
+        :vias-detalle="viasDetalle"
+        :subregiones="subregiones"
+        @close="cerrarModal"
+      />
 
       <!-- ── Avance físico + Avance en km ──────────────────────────────── -->
       <div class="avance-row" :class="{ animate: showContent }">

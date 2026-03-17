@@ -175,16 +175,38 @@ export function useMapLayers(getMap, { onOptionsLoaded, onStatsLoaded } = {}, { 
 
     let longitudTotal    = 0
     const kmPorSubregion = {}
+    const viasDetalle    = []
 
     if (geoVias) {
       for (const f of geoVias.features) {
         const desc = parseDescription(f.properties.description ?? '')
         const km   = calcGeomKm(f.geometry) || extractKm(desc) || 0
+        const sub  = resolveSubregion(desc, f.geometry) ?? 'Sin subregión'
+
         if (km) {
           longitudTotal += km
-          const sub = resolveSubregion(desc, f.geometry) ?? 'Sin subregión'
           kmPorSubregion[sub] = (kmPorSubregion[sub] ?? 0) + km
         }
+
+        // Extraer campos clave de cada vía para los modales de detalle
+        const get = (pattern) => {
+          const key = Object.keys(desc).find(k => pattern.test(k))
+          return key ? String(desc[key]).trim() : ''
+        }
+        const avanceRaw = parseFloat(get(/avance/i).replace('%', '').replace(',', '.')) || 0
+
+        viasDetalle.push({
+          nombre:      f.properties.name ?? 'Sin nombre',
+          codigo:      get(/c[oó]digo/i),
+          municipio:   sentenceCase(get(/municipio/i)),
+          subregion:   sub,
+          km:          Math.round(km * 100) / 100,
+          avance:      Math.round(avanceRaw * 10) / 10,
+          contratista: get(/contratista/i),
+          fechaInicio: get(/fecha/i),
+          plazo:       get(/plazo/i),
+          circuito:    get(/circuito/i),
+        })
       }
     }
 
@@ -204,6 +226,7 @@ export function useMapLayers(getMap, { onOptionsLoaded, onStatsLoaded } = {}, { 
       municipios:       uniqueMunicipios,
       circuitos:        totalCircuitos,
       subregiones:      subregionesStats,
+      viasDetalle,
     })
 
     if (destroyed) return

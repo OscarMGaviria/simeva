@@ -41,6 +41,7 @@ watch(activeFilters, (f) => {
         :municipios="mapStats.municipios"
         :circuitos="mapStats.circuitos"
         :subregiones="mapStats.subregiones"
+        :vias-detalle="mapStats.viasDetalle"
         :active-subregion="activeFilters.subregion"
         @filter-subregion="sub => store.setFilter({ ...activeFilters, subregion: sub, municipio: 'Todos los municipios' })"
       />

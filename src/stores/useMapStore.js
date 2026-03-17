@@ -22,6 +22,7 @@ export const useMapStore = defineStore('map', () => {
     municipios:       0,
     circuitos:        0,
     subregiones:      [],
+    viasDetalle:      [],
   })
 
   const filteredMunicipioOptions = computed(() => {
