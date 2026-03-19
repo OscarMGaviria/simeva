@@ -4,6 +4,7 @@ import maplibregl from 'maplibre-gl'
 export function useMapFilters(getMap, filtersRef, { cachedMunicipios, cachedVias, center, zoom, refreshVisibleCallouts } = {}) {
   const selectedSubregion = ref('')
   const selectedMunicipio = ref('')
+  const noResults         = ref(false)
 
   function coordsBounds(coords, bounds) {
     if (typeof coords[0] === 'number') { bounds.extend(coords) }
@@ -112,10 +113,30 @@ export function useMapFilters(getMap, filtersRef, { cachedMunicipios, cachedVias
       map.flyTo({ center, zoom, duration: 900 })
     }
 
+    // ── Detección de sin-resultados ────────────────────────────────────────
+    if (cachedVias.value) {
+      const hasTextFilter = !!(search || (circuito && circuito !== 'Todos los circuitos'))
+      if (hasTextFilter) {
+        let count
+        if (circuito && circuito !== 'Todos los circuitos') {
+          count = cachedVias.value.features.filter(f => f.properties.name === circuito).length
+        } else {
+          count = cachedVias.value.features.filter(
+            f => f.properties.name?.toLowerCase().includes(search)
+          ).length
+        }
+        noResults.value = count === 0
+      } else {
+        noResults.value = false
+      }
+    } else {
+      noResults.value = false
+    }
+
     refreshVisibleCallouts?.(filters)
   }
 
   watch(filtersRef, (filters) => { applyFilters(filters) }, { deep: true })
 
-  return { selectedSubregion, selectedMunicipio }
+  return { selectedSubregion, selectedMunicipio, noResults }
 }

@@ -7,7 +7,7 @@ import StatsPanel from './components/organisms/StatsPanel.vue'
 import { useMapStore } from './stores/useMapStore.js'
 
 const store = useMapStore()
-const { activeFilters, filterOptions, mapStats, filteredMunicipioOptions } = storeToRefs(store)
+const { activeFilters, filterOptions, mapStats, mapLoading, filteredMunicipioOptions } = storeToRefs(store)
 const isPanelOpen = ref(true)
 
 // Sincronizar URL al cambiar filtros
@@ -36,6 +36,7 @@ watch(activeFilters, (f) => {
       <MapView />
       <StatsPanel
         :is-open="isPanelOpen"
+        :loading="mapLoading"
         :vias-intervenidas="mapStats.viasIntervenidas"
         :longitud-total="mapStats.longitudTotal"
         :municipios="mapStats.municipios"

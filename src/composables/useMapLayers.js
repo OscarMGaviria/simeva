@@ -56,12 +56,30 @@ export function useMapLayers(getMap, { onOptionsLoaded, onStatsLoaded } = {}, { 
       return
     }
 
+    // Normaliza texto para comparar sin acentos ni mayúsculas
+    const norm = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
+
+    // Municipios que tienen al menos una vía registrada
+    const mpioNormSet = new Set()
+    if (geoVias) {
+      for (const f of geoVias.features) {
+        const desc    = parseDescription(f.properties.description ?? '')
+        const mpioKey = Object.keys(desc).find(k => /municipio/i.test(k))
+        if (mpioKey) {
+          const mpio = String(desc[mpioKey]).trim()
+          if (mpio) mpioNormSet.add(norm(mpio))
+        }
+      }
+    }
+
     // ── Emitir opciones para filtros ──────────────────────────────────────────
     const subregiones = geoMunicipios
       ? [...new Set(geoMunicipios.features.map(f => sentenceCase(f.properties.subregion)).filter(Boolean))].sort()
       : []
     const municipioOpts = geoMunicipios
-      ? [...new Set(geoMunicipios.features.map(f => sentenceCase(f.properties.mpio_nombr)).filter(Boolean))].sort()
+      ? [...new Set(geoMunicipios.features.map(f => sentenceCase(f.properties.mpio_nombr)).filter(Boolean))]
+          .filter(m => mpioNormSet.has(norm(m)))
+          .sort()
       : []
     const circuitos = geoVias
       ? geoVias.features.map(f => f.properties.name).filter(Boolean).sort()
@@ -72,7 +90,7 @@ export function useMapLayers(getMap, { onOptionsLoaded, onStatsLoaded } = {}, { 
       for (const f of geoMunicipios.features) {
         const sub  = sentenceCase(f.properties.subregion)
         const mpio = sentenceCase(f.properties.mpio_nombr)
-        if (sub && mpio) {
+        if (sub && mpio && mpioNormSet.has(norm(mpio))) {
           if (!municipiosPorSubregion[sub]) municipiosPorSubregion[sub] = []
           if (!municipiosPorSubregion[sub].includes(mpio)) municipiosPorSubregion[sub].push(mpio)
         }
@@ -96,9 +114,6 @@ export function useMapLayers(getMap, { onOptionsLoaded, onStatsLoaded } = {}, { 
       'Valle de aburrá', 'Oriente', 'Occidente', 'Norte',
       'Nordeste', 'Urabá', 'Bajo cauca', 'Magdalena medio', 'Suroeste',
     ]
-
-    // Normaliza texto para comparar sin acentos ni mayúsculas
-    const norm = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
 
     // Lookup municipio → subregión desde geoMunicipios
     const municipioToSub = {}
@@ -320,11 +335,13 @@ export function useMapLayers(getMap, { onOptionsLoaded, onStatsLoaded } = {}, { 
         })
 
         map.on('click', 'vias-line', (e) => {
-          const p = e.features[0].properties
+          const p    = e.features[0].properties
+          const feat = cachedVias.value?.features.find(f => f.properties.name === p.name)
           selectedVia.value = {
             name:        p.name ?? 'Vía',
             description: parseDescription(p.description ?? ''),
             photos:      extractPhotosByPhase(p, p.description ?? ''),
+            geometry:    feat?.geometry ?? null,
           }
         })
         map.on('mouseenter', 'vias-line', () => { map.getCanvas().style.cursor = 'pointer' })

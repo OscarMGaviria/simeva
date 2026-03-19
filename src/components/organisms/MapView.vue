@@ -5,6 +5,7 @@ import { BASEMAPS } from '../../composables/useMapInit.js'
 import { useMapOrchestrator } from '../../composables/useMapOrchestrator.js'
 import { useMapStore } from '../../stores/useMapStore.js'
 import ViaDetailModal from './ViaDetailModal.vue'
+import MapSearch from '../molecules/MapSearch.vue'
 
 const store = useMapStore()
 const mapContainer = ref(null)
@@ -15,6 +16,8 @@ const {
   selectedVia,
   selectedSubregion, selectedMunicipio,
   visibleCallouts,
+  noResults,
+  openVia,
 } = useMapOrchestrator(mapContainer, () => store.activeFilters)
 </script>
 
@@ -122,6 +125,19 @@ const {
       </div>
     </Transition>
 
+    <!-- Buscador flotante de vías -->
+    <MapSearch @open-via="openVia" />
+
+    <!-- Toast: sin resultados -->
+    <Transition name="loader-fade">
+      <div v-if="noResults" class="no-results-toast">
+        <svg viewBox="0 0 20 20" fill="currentColor" class="nr-icon">
+          <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/>
+        </svg>
+        No se encontraron vías con ese criterio
+      </div>
+    </Transition>
+
     <!-- Botón relieve 3D -->
     <button
       class="terrain-toggle"
@@ -206,6 +222,35 @@ const {
   white-space: nowrap;
   backdrop-filter: blur(4px);
   box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+/* ── No-results toast ── */
+.no-results-toast {
+  position: absolute;
+  top: 56px;
+  right: 56px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid #fde68a;
+  border-left: 4px solid #f59e0b;
+  border-radius: 10px;
+  padding: 9px 14px;
+  font-family: 'Prompt', sans-serif;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #92400e;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+.nr-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: #f59e0b;
 }
 
 /* ── Terrain toggle ── */

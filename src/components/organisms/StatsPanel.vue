@@ -11,6 +11,7 @@ const emit = defineEmits(['filter-subregion'])
 const props = defineProps({
   isOpen:            { type: Boolean, default: true },
   activeSubregion:   { type: String,  default: '' },
+  loading:           { type: Boolean, default: false },
 
   // KPI
   viasIntervenidas: { type: Number, default: 47 },
@@ -155,18 +156,23 @@ const yTicks = computed(() => {
 
       <!-- ── KPI cards ─────────────────────────────────────────────────── -->
       <div class="cards-row" :class="{ animate: showContent }">
-        <StatCard title="Vías intervenidas" :value="fmtVias" @click="abrirModal('vias')" title-attr="Ver detalle de vías">
-          <Route :size="18" />
-        </StatCard>
-        <StatCard title="Longitud total" :value="fmtLong" unit="km" @click="abrirModal('longitud')" title-attr="Ver distribución por subregión">
-          <Ruler :size="18" />
-        </StatCard>
-        <StatCard title="Municipios" :value="fmtMpios" @click="abrirModal('municipios')" title-attr="Ver detalle por municipio">
-          <MapPin :size="18" />
-        </StatCard>
-        <StatCard title="Circuitos" :value="fmtCirc" @click="abrirModal('circuitos')" title-attr="Ver detalle de circuitos">
-          <GitBranch :size="18" />
-        </StatCard>
+        <template v-if="loading">
+          <div v-for="n in 4" :key="n" class="stat-skeleton" />
+        </template>
+        <template v-else>
+          <StatCard title="Vías intervenidas" :value="fmtVias" @click="abrirModal('vias')" title-attr="Ver detalle de vías">
+            <Route :size="18" />
+          </StatCard>
+          <StatCard title="Longitud total" :value="fmtLong" unit="km" @click="abrirModal('longitud')" title-attr="Ver distribución por subregión">
+            <Ruler :size="18" />
+          </StatCard>
+          <StatCard title="Municipios" :value="fmtMpios" @click="abrirModal('municipios')" title-attr="Ver detalle por municipio">
+            <MapPin :size="18" />
+          </StatCard>
+          <StatCard title="Circuitos" :value="fmtCirc" @click="abrirModal('circuitos')" title-attr="Ver detalle de circuitos">
+            <GitBranch :size="18" />
+          </StatCard>
+        </template>
       </div>
 
       <!-- ── Modal de detalle ───────────────────────────────────────────── -->
@@ -352,6 +358,21 @@ const yTicks = computed(() => {
 @keyframes fadeSlideRight {
   from { opacity: 0; transform: translateX(-14px); }
   to   { opacity: 1; transform: translateX(0);     }
+}
+
+/* ── Skeleton cards ───────────────────────────────────────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position:  400px 0; }
+}
+
+.stat-skeleton {
+  border-radius: 16px;
+  height: 110px;
+  background: linear-gradient(90deg, #d6eadb 25%, #eaf4ed 50%, #d6eadb 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s infinite linear;
+  border: 1px solid rgba(255,255,255,0.6);
 }
 
 /* ── KPI cards ────────────────────────────────────────────────────────────── */

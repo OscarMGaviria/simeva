@@ -1,5 +1,6 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import maplibregl from 'maplibre-gl'
 
 const props = defineProps({ via: { type: Object, required: true } })
 const emit  = defineEmits(['close'])
@@ -73,6 +74,135 @@ const setPhase = (key) => { activePhase.value = key; activeIdx.value = 0 }
 
 const hasPhotos = computed(() => availablePhases.value.length > 0)
 
+// ── Route animation ───────────────────────────────────────────────────────────
+const showRoute   = ref(false)
+const routeMapEl  = ref(null)
+const routePlaying = ref(false)
+let _routeMap  = null
+let _animTimer = null
+
+function cleanupRoute() {
+  if (_animTimer) { clearInterval(_animTimer); _animTimer = null }
+  if (_routeMap)  { _routeMap.remove(); _routeMap = null }
+  routePlaying.value = false
+}
+
+async function toggleRoute() {
+  if (showRoute.value) { showRoute.value = false; cleanupRoute(); return }
+  showRoute.value = true
+  await nextTick()
+  startRouteMap()
+}
+
+function startRouteMap() {
+  const geometry = props.via.geometry
+  if (!geometry || !routeMapEl.value) return
+
+  // Normalizar siempre a array de segmentos (MultiLineString)
+  const segments = geometry.type === 'LineString'
+    ? [geometry.coordinates]
+    : geometry.type === 'MultiLineString'
+    ? geometry.coordinates
+    : []
+  if (!segments.length || !segments[0].length) return
+
+  const firstPt   = segments[0][0]
+  const totalPts  = segments.reduce((s, seg) => s + seg.length, 0)
+
+  _routeMap = new maplibregl.Map({
+    container: routeMapEl.value,
+    style: {
+      version: 8,
+      sources: {
+        osm: {
+          type: 'raster',
+          tiles: ['https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'],
+          tileSize: 256,
+          attribution: '© OpenStreetMap © CARTO',
+        },
+      },
+      layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
+    },
+    center: firstPt,
+    zoom: 13,
+    pitch: 30,
+    attributionControl: false,
+  })
+
+  _routeMap.on('load', () => {
+    // La geometría animada sigue la misma estructura (MultiLineString)
+    // para no unir segmentos discontinuos con líneas falsas
+    const animCoords = [[firstPt]]
+    const geojson = {
+      type: 'FeatureCollection',
+      features: [{ type: 'Feature', geometry: { type: 'MultiLineString', coordinates: animCoords } }],
+    }
+
+    _routeMap.addSource('trace', { type: 'geojson', data: geojson })
+    _routeMap.addLayer({
+      id: 'trace-casing',
+      type: 'line', source: 'trace',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.6 },
+    })
+    _routeMap.addLayer({
+      id: 'trace',
+      type: 'line', source: 'trace',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': '#ffaa00', 'line-width': 5, 'line-opacity': 0.95 },
+    })
+
+    _routeMap.jumpTo({ center: firstPt, zoom: 14 })
+    routePlaying.value = true
+
+    // ~20 segundos de animación sin importar cuántos puntos tenga la vía
+    const INTERVAL = 40
+    const BATCH    = Math.max(1, Math.ceil(totalPts / 500))
+
+    let segIdx = 0
+    let ptIdx  = 1   // primer punto ya está en animCoords[0]
+
+    _animTimer = setInterval(() => {
+      let added  = 0
+      let lastPt = null
+
+      while (added < BATCH && segIdx < segments.length) {
+        const seg = segments[segIdx]
+        if (ptIdx < seg.length) {
+          animCoords[segIdx].push(seg[ptIdx])
+          lastPt = seg[ptIdx]
+          ptIdx++
+          added++
+        } else {
+          // Pasar al siguiente segmento, sin unirlo al anterior
+          segIdx++
+          ptIdx = 0
+          if (segIdx < segments.length) {
+            animCoords[segIdx] = [segments[segIdx][0]]
+            lastPt = segments[segIdx][0]
+            ptIdx  = 1
+            added++
+          }
+        }
+      }
+
+      _routeMap.getSource('trace').setData(geojson)
+      if (lastPt) _routeMap.easeTo({ center: lastPt, duration: INTERVAL + 10, easing: t => t })
+
+      if (segIdx >= segments.length) {
+        clearInterval(_animTimer)
+        _animTimer = null
+        routePlaying.value = false
+      }
+    }, INTERVAL)
+  })
+}
+
+function replayRoute() {
+  cleanupRoute()
+  startRouteMap()
+}
+
 // ── Keyboard / scroll lock ────────────────────────────────────────────────────
 const onKey = (e) => {
   if (e.key === 'Escape')     emit('close')
@@ -88,6 +218,7 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('keydown', onKey)
   document.body.style.overflow = ''
+  cleanupRoute()
 })
 </script>
 
@@ -154,9 +285,41 @@ onUnmounted(() => {
 
           </div>
 
-          <!-- RIGHT: fotos -->
+          <!-- RIGHT: fotos / ruta -->
           <div class="col-right">
             <div class="block block--full">
+
+              <!-- Tab bar: Fotos / Recorrido -->
+              <div class="right-tabs">
+                <button class="right-tab" :class="{ 'is-active': !showRoute }" @click="showRoute && toggleRoute()">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                  Fotos
+                </button>
+                <button class="right-tab" :class="{ 'is-active': showRoute }" @click="!showRoute && toggleRoute()" :disabled="!via.geometry">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M3 6l9-3 9 3M3 18l9 3 9-3"/></svg>
+                  Recorrido
+                </button>
+              </div>
+
+              <!-- Route mini-map -->
+              <template v-if="showRoute">
+                <div class="route-wrap">
+                  <div ref="routeMapEl" class="route-map" />
+                  <div class="route-status">
+                    <span v-if="routePlaying" class="route-playing">
+                      <span class="route-dot" />
+                      Animando recorrido…
+                    </span>
+                    <span v-else class="route-done">Recorrido completo</span>
+                    <button class="btn-replay" @click="replayRoute" title="Repetir animación">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-5"/></svg>
+                    </button>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Photos -->
+              <template v-else>
               <p class="block-label">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
                 Registro fotográfico
@@ -210,6 +373,7 @@ onUnmounted(() => {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
                 <p>Sin registro fotográfico</p>
               </div>
+              </template>
             </div>
           </div>
 
@@ -576,6 +740,94 @@ onUnmounted(() => {
   font-size: 13px;
   color: #c4c9d2;
 }
+
+/* ── Right tabs (Fotos / Recorrido) ── */
+.right-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  flex-shrink: 0;
+}
+.right-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1.5px solid #e5e7eb;
+  background: #fff;
+  font-family: 'Prompt', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all .14s;
+}
+.right-tab svg { width: 13px; height: 13px; flex-shrink: 0; }
+.right-tab:hover:not(:disabled) { border-color: #0b5640; color: #0b5640; }
+.right-tab.is-active { background: #0b5640; color: #fff; border-color: #0b5640; }
+.right-tab:disabled  { opacity: .4; cursor: not-allowed; }
+
+/* ── Route mini-map ── */
+.route-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.route-map {
+  flex: 1;
+  border-radius: 10px;
+  overflow: hidden;
+  min-height: 260px;
+  border: 1px solid #e5e7eb;
+}
+.route-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+.route-playing {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: 'Prompt', sans-serif;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #0b5640;
+}
+.route-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #0b5640;
+  animation: routePulse 1s ease-in-out infinite;
+}
+@keyframes routePulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: .4; transform: scale(.7); }
+}
+.route-done {
+  font-family: 'Prompt', sans-serif;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #9ca3af;
+}
+.btn-replay {
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  cursor: pointer;
+  color: #6b7280;
+  transition: background .13s, color .13s, border-color .13s;
+  flex-shrink: 0;
+}
+.btn-replay svg { width: 14px; height: 14px; }
+.btn-replay:hover { background: #f0fdf4; color: #0b5640; border-color: #0b5640; }
 
 /* ── Footer ── */
 .mfoot {

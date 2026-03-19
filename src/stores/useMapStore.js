@@ -25,6 +25,9 @@ export const useMapStore = defineStore('map', () => {
     viasDetalle:      [],
   })
 
+  const mapLoading = ref(true)
+  function setMapLoading(val) { mapLoading.value = val }
+
   const filteredMunicipioOptions = computed(() => {
     const sub = activeFilters.value.subregion
     if (!sub || sub === 'Todas las subregiones') return filterOptions.value.municipios
@@ -46,9 +49,11 @@ export const useMapStore = defineStore('map', () => {
     activeFilters,
     filterOptions,
     mapStats,
+    mapLoading,
     filteredMunicipioOptions,
     setFilter,
     setFilterOptions,
     setMapStats,
+    setMapLoading,
   }
 })

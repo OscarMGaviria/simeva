@@ -33,6 +33,7 @@ const emitFilters = () => {
 const clearFilters = () => {
   searchText.value   = ''
   subregionVal.value = props.subregionOptions[0]
+  municipioVal.value = props.municipioOptions[0]
   circuitoVal.value  = props.circuitoOptions[0]
   emitFilters()
 }
